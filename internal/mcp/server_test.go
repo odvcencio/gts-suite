@@ -5,6 +5,8 @@ import (
 	"bytes"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
 	"strconv"
 	"testing"
 )
@@ -60,6 +62,92 @@ func TestServerInitializeAndToolsList(t *testing.T) {
 	tools, ok := result2["tools"].([]any)
 	if !ok || len(tools) == 0 {
 		t.Fatalf("expected non-empty tools list, got %#v", result2["tools"])
+	}
+}
+
+func TestServerToolsCallIncludesMeta(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func A() {}
+
+func B() { A() }
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	service := NewService(tmpDir, "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "gts_refs",
+			"arguments": map[string]any{
+				"name": "A",
+			},
+		},
+	})
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      2,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "missing_tool",
+		},
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	first, rest := decodeFramedJSON(t, output.Bytes())
+	firstResult, ok := first["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first result map, got %T", first["result"])
+	}
+	firstMeta, ok := firstResult["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected first _meta map, got %T", firstResult["_meta"])
+	}
+	if firstMeta["tool"] != "gts_refs" {
+		t.Fatalf("expected first _meta.tool=gts_refs, got %#v", firstMeta["tool"])
+	}
+	if okValue, ok := firstMeta["ok"].(bool); !ok || !okValue {
+		t.Fatalf("expected first _meta.ok=true, got %#v", firstMeta["ok"])
+	}
+	if _, ok := firstMeta["duration_ms"].(float64); !ok {
+		t.Fatalf("expected first _meta.duration_ms number, got %T", firstMeta["duration_ms"])
+	}
+	if isError, ok := firstResult["isError"].(bool); ok && isError {
+		t.Fatalf("expected first result isError to be false, got %#v", firstResult["isError"])
+	}
+
+	second, _ := decodeFramedJSON(t, rest)
+	secondResult, ok := second["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected second result map, got %T", second["result"])
+	}
+	secondMeta, ok := secondResult["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected second _meta map, got %T", secondResult["_meta"])
+	}
+	if secondMeta["tool"] != "missing_tool" {
+		t.Fatalf("expected second _meta.tool=missing_tool, got %#v", secondMeta["tool"])
+	}
+	if okValue, ok := secondMeta["ok"].(bool); !ok || okValue {
+		t.Fatalf("expected second _meta.ok=false, got %#v", secondMeta["ok"])
+	}
+	if _, ok := secondMeta["duration_ms"].(float64); !ok {
+		t.Fatalf("expected second _meta.duration_ms number, got %T", secondMeta["duration_ms"])
+	}
+	if isError, ok := secondResult["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected second result isError=true, got %#v", secondResult["isError"])
 	}
 }
 

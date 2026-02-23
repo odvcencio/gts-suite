@@ -105,6 +105,8 @@ Supported kinds in this version:
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
 - MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, `gts_dead`, `gts_chunk`, `gts_lint`, `gts_refactor`, `gts_diff`, `gts_stats`, `gts_files`, and `gts_bridge` via stdio JSON-RPC.
 - MCP write operations are disabled by default; enable explicitly with `--allow-writes` for mutating tools.
+- MCP tool schemas are normalized to strict object schemas (`additionalProperties: false`) for safer agent-side argument validation.
+- MCP `tools/call` responses include `_meta` diagnostics (`tool`, `ok`, `duration_ms`).
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
@@ -129,4 +131,5 @@ Supported kinds in this version:
   - Next: improve diff/edit application for more append/EOF cases and add persistent warm watch-state hydration.
 - Phase 6 in progress:
   - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for query/refs/context/scope/deps/callgraph/dead/chunk/lint/refactor/diff.
-  - Next: improve MCP schemas and add richer diagnostics/streaming.
+  - Shipped: normalized strict tool schemas and per-call `_meta` diagnostics in MCP responses.
+  - Next: add streaming progress notifications for long-running tool calls.

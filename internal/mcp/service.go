@@ -60,7 +60,7 @@ func NewServiceWithOptions(defaultRoot, defaultCache string, opts ServiceOptions
 }
 
 func (s *Service) Tools() []Tool {
-	return []Tool{
+	tools := []Tool{
 		{
 			Name:        "gts_query",
 			Description: "Run a raw tree-sitter S-expression query across indexed files",
@@ -271,6 +271,90 @@ func (s *Service) Tools() []Tool {
 			},
 		},
 	}
+	for i := range tools {
+		finalizeToolSchema(&tools[i])
+	}
+	sort.Slice(tools, func(i, j int) bool {
+		return tools[i].Name < tools[j].Name
+	})
+	return tools
+}
+
+func finalizeToolSchema(tool *Tool) {
+	if tool == nil {
+		return
+	}
+
+	schema := tool.InputSchema
+	if schema == nil {
+		schema = map[string]any{}
+	}
+	schema["type"] = "object"
+
+	properties := normalizeSchemaProperties(schema["properties"])
+	schema["properties"] = properties
+
+	required := normalizeRequiredKeys(schema["required"], properties)
+	if len(required) > 0 {
+		schema["required"] = required
+	} else {
+		delete(schema, "required")
+	}
+
+	if _, ok := schema["additionalProperties"]; !ok {
+		schema["additionalProperties"] = false
+	}
+	tool.InputSchema = schema
+}
+
+func normalizeSchemaProperties(raw any) map[string]any {
+	switch typed := raw.(type) {
+	case map[string]any:
+		if typed == nil {
+			return map[string]any{}
+		}
+		return typed
+	default:
+		return map[string]any{}
+	}
+}
+
+func normalizeRequiredKeys(raw any, properties map[string]any) []string {
+	if len(properties) == 0 {
+		return nil
+	}
+
+	keys := make([]string, 0, len(properties))
+	switch typed := raw.(type) {
+	case string:
+		keys = append(keys, typed)
+	case []string:
+		keys = append(keys, typed...)
+	case []any:
+		for _, item := range typed {
+			value, ok := item.(string)
+			if !ok {
+				continue
+			}
+			keys = append(keys, value)
+		}
+	}
+
+	seen := map[string]bool{}
+	normalized := make([]string, 0, len(keys))
+	for _, key := range keys {
+		key = strings.TrimSpace(key)
+		if key == "" || seen[key] {
+			continue
+		}
+		if _, ok := properties[key]; !ok {
+			continue
+		}
+		seen[key] = true
+		normalized = append(normalized, key)
+	}
+	sort.Strings(normalized)
+	return normalized
 }
 
 func (s *Service) Call(name string, args map[string]any) (any, error) {

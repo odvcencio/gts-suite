@@ -3,6 +3,8 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"reflect"
+	"sort"
 	"strings"
 	"testing"
 
@@ -32,6 +34,85 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
+	}
+}
+
+func TestServiceToolsAreSortedAndSchemasNormalized(t *testing.T) {
+	service := NewService(".", "")
+	tools := service.Tools()
+	if len(tools) == 0 {
+		t.Fatalf("expected tools to be non-empty")
+	}
+
+	toolNames := make([]string, 0, len(tools))
+	for _, tool := range tools {
+		toolNames = append(toolNames, tool.Name)
+		schema := tool.InputSchema
+		if schema == nil {
+			t.Fatalf("tool %q schema is nil", tool.Name)
+		}
+		if schema["type"] != "object" {
+			t.Fatalf("tool %q schema type must be object, got %#v", tool.Name, schema["type"])
+		}
+		properties, ok := schema["properties"].(map[string]any)
+		if !ok {
+			t.Fatalf("tool %q properties must be map[string]any, got %T", tool.Name, schema["properties"])
+		}
+		if additional, ok := schema["additionalProperties"].(bool); !ok || additional {
+			t.Fatalf("tool %q must set additionalProperties=false, got %#v", tool.Name, schema["additionalProperties"])
+		}
+		requiredRaw, ok := schema["required"]
+		if !ok {
+			continue
+		}
+		required, ok := requiredRaw.([]string)
+		if !ok {
+			t.Fatalf("tool %q required must be []string, got %T", tool.Name, requiredRaw)
+		}
+		if !sort.StringsAreSorted(required) {
+			t.Fatalf("tool %q required keys must be sorted, got %v", tool.Name, required)
+		}
+		for _, key := range required {
+			if _, exists := properties[key]; !exists {
+				t.Fatalf("tool %q required key %q missing from properties", tool.Name, key)
+			}
+		}
+	}
+
+	if !sort.StringsAreSorted(toolNames) {
+		t.Fatalf("tools should be sorted alphabetically, got %v", toolNames)
+	}
+}
+
+func TestFinalizeToolSchemaNormalizesRequired(t *testing.T) {
+	tool := Tool{
+		Name: "sample",
+		InputSchema: map[string]any{
+			"type": "unexpected",
+			"properties": map[string]any{
+				"name": map[string]any{"type": "string"},
+				"path": map[string]any{"type": "string"},
+			},
+			"required": []any{" path ", "name", "missing", 9, "name"},
+		},
+	}
+
+	finalizeToolSchema(&tool)
+
+	if tool.InputSchema["type"] != "object" {
+		t.Fatalf("schema type should be normalized to object, got %#v", tool.InputSchema["type"])
+	}
+	if additional, ok := tool.InputSchema["additionalProperties"].(bool); !ok || additional {
+		t.Fatalf("additionalProperties should default to false, got %#v", tool.InputSchema["additionalProperties"])
+	}
+
+	required, ok := tool.InputSchema["required"].([]string)
+	if !ok {
+		t.Fatalf("required should be []string, got %T", tool.InputSchema["required"])
+	}
+	expected := []string{"name", "path"}
+	if !reflect.DeepEqual(required, expected) {
+		t.Fatalf("expected required=%v, got %v", expected, required)
 	}
 }
 

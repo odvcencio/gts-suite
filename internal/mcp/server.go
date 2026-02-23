@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"time"
 )
 
 const serverName = "gts-suite"
@@ -62,9 +63,10 @@ type toolsCallParams struct {
 }
 
 type toolCallResult struct {
-	Content           []toolContent `json:"content,omitempty"`
-	StructuredContent any           `json:"structuredContent,omitempty"`
-	IsError           bool          `json:"isError,omitempty"`
+	Content           []toolContent  `json:"content,omitempty"`
+	StructuredContent any            `json:"structuredContent,omitempty"`
+	IsError           bool           `json:"isError,omitempty"`
+	Meta              map[string]any `json:"_meta,omitempty"`
 }
 
 type toolContent struct {
@@ -149,8 +151,15 @@ func (s *Server) handleRequest(request rpcRequest) (any, *rpcError) {
 			params.Arguments = map[string]any{}
 		}
 
+		started := time.Now()
 		result, err := s.service.Call(params.Name, params.Arguments)
+		durationMs := time.Since(started).Milliseconds()
+		meta := map[string]any{
+			"tool":        params.Name,
+			"duration_ms": durationMs,
+		}
 		if err != nil {
+			meta["ok"] = false
 			return toolCallResult{
 				IsError: true,
 				Content: []toolContent{
@@ -159,9 +168,11 @@ func (s *Server) handleRequest(request rpcRequest) (any, *rpcError) {
 						Text: err.Error(),
 					},
 				},
+				Meta: meta,
 			}, nil
 		}
 
+		meta["ok"] = true
 		encoded, encodeErr := json.MarshalIndent(result, "", "  ")
 		if encodeErr != nil {
 			encoded = []byte(`{"error":"failed to encode result"}`)
@@ -174,6 +185,7 @@ func (s *Server) handleRequest(request rpcRequest) (any, *rpcError) {
 				},
 			},
 			StructuredContent: result,
+			Meta:              meta,
 		}, nil
 	default:
 		return nil, &rpcError{Code: -32601, Message: fmt.Sprintf("method not found: %s", request.Method)}
