@@ -15,7 +15,7 @@ import (
 func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 	app := newCLI()
 
-	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtscallgraph", "gtsdead", "gtsquery", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
+	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtscallgraph", "gtsdead", "gtsquery", "gtsmcp", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
 		if _, ok := app.specs[id]; !ok {
 			t.Fatalf("missing command spec for %q", id)
 		}
@@ -36,6 +36,7 @@ func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 		"callgraph": "gtscallgraph",
 		"dead":      "gtsdead",
 		"query":     "gtsquery",
+		"mcp":       "gtsmcp",
 		"diff":      "gtsdiff",
 		"refactor":  "gtsrefactor",
 		"chunk":     "gtschunk",
@@ -82,6 +83,12 @@ func TestCLI_HelpSubcommand(t *testing.T) {
 	text := output.String()
 	if !strings.Contains(text, "Usage:   gts gtsgrep") {
 		t.Fatalf("expected command usage in help output, got %q", text)
+	}
+}
+
+func TestRunMCPRejectsPositionals(t *testing.T) {
+	if err := runMCP([]string{"unexpected"}); err == nil {
+		t.Fatal("expected runMCP to reject positional arguments")
 	}
 }
 

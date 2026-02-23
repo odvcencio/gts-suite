@@ -27,6 +27,7 @@ import (
 	"gts-suite/internal/files"
 	"gts-suite/internal/index"
 	"gts-suite/internal/lint"
+	"gts-suite/internal/mcp"
 	"gts-suite/internal/model"
 	"gts-suite/internal/query"
 	"gts-suite/internal/refactor"
@@ -217,6 +218,13 @@ func newCLI() *cli {
 			Run:     runQuery,
 		},
 		{
+			ID:      "gtsmcp",
+			Aliases: []string{"mcp"},
+			Summary: "Run MCP stdio server for AI-agent tool integration",
+			Usage:   "gtsmcp [--root .] [--cache .gts/index.json]",
+			Run:     runMCP,
+		},
+		{
 			ID:      "gtsdiff",
 			Aliases: []string{"diff"},
 			Summary: "Structural diff between two snapshots",
@@ -359,6 +367,7 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtscallgraph main . --depth 2")
 	fmt.Println("  gts gtsdead . --kind callable")
 	fmt.Println("  gts gtsquery '(function_declaration (identifier) @name)' .")
+	fmt.Println("  gts gtsmcp --root .")
 	fmt.Println("  gts gtsdiff --before-cache before.json --after-cache after.json")
 	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --engine go --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
@@ -1754,6 +1763,30 @@ func runQuery(args []string) error {
 		)
 	}
 	return nil
+}
+
+func runMCP(args []string) error {
+	flags := flag.NewFlagSet("gtsmcp", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	args = normalizeFlagArgs(args, map[string]bool{
+		"-root":   true,
+		"--root":  true,
+		"-cache":  true,
+		"--cache": true,
+	})
+
+	root := flags.String("root", ".", "default root path for tool calls")
+	cachePath := flags.String("cache", "", "default cache path for tool calls")
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 0 {
+		return errors.New("usage: gtsmcp [--root .] [--cache .gts/index.json]")
+	}
+
+	service := mcp.NewService(*root, *cachePath)
+	return mcp.RunStdio(service, os.Stdin, os.Stdout, os.Stderr)
 }
 
 func runDiff(args []string) error {

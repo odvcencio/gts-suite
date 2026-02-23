@@ -15,6 +15,7 @@ Bootstrap implementation of a gotreesitter-style CLI suite with shared indexing 
 - `gtscallgraph`: Traverse resolved call graph edges from matching roots.
 - `gtsdead`: List callable definitions with zero incoming call references.
 - `gtsquery`: Run raw tree-sitter S-expression queries across files.
+- `gtsmcp`: Run MCP stdio server exposing structural tools to AI agents.
 - `gtsdiff`: Compare structural changes between two snapshots.
 - `gtsrefactor`: Apply structural declaration renames (dry-run by default).
 - `gtschunk`: Split code into AST-boundary chunks for retrieval/indexing.
@@ -41,6 +42,7 @@ go run ./cmd/gts gtsrefs ParseConfig . --cache .gts/index.json
 go run ./cmd/gts gtscallgraph main . --depth 2
 go run ./cmd/gts gtsdead . --kind callable
 go run ./cmd/gts gtsquery '(function_declaration (identifier) @name)' . --count
+go run ./cmd/gts gtsmcp --root .
 go run ./cmd/gts gtsgrep 'method_definition[receiver=/Service/,signature=/Serve/]' --cache .gts/index.json --count
 go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --json
 go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
@@ -100,6 +102,7 @@ Supported kinds in this version:
 - Structural diff detects symbol additions/removals/modifications and import changes.
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
+- MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, and `gts_deps` via stdio JSON-RPC.
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
@@ -122,5 +125,6 @@ Supported kinds in this version:
 - Phase 5 in progress:
   - Shipped: changed-file watch updates now run through incremental watch apply and maintain per-file parse trees.
   - Next: improve diff/edit application for more append/EOF cases and add persistent warm watch-state hydration.
-- Phase 6 pending:
-  - Add MCP server exposing `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, and `gts_deps`.
+- Phase 6 in progress:
+  - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for query/refs/context/scope/deps.
+  - Next: expand MCP tool coverage (callgraph/dead/refactor) and add richer schema/streaming diagnostics.
