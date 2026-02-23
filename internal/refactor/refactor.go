@@ -1,3 +1,4 @@
+// Package refactor performs AST-aware declaration renaming with optional cross-package callsite updates.
 package refactor
 
 import (

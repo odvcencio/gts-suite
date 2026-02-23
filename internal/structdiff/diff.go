@@ -1,3 +1,4 @@
+// Package structdiff compares two structural indexes to detect added, removed, and modified symbols and imports.
 package structdiff
 
 import (

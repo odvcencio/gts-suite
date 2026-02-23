@@ -1,3 +1,4 @@
+// Package files lists and filters indexed source files by language, symbol count, and other structural density metrics.
 package files
 
 import (

@@ -1,3 +1,4 @@
+// Package bridge detects cross-component dependency edges between top-level directory groups in a codebase.
 package bridge
 
 import (

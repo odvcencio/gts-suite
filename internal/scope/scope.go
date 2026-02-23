@@ -1,3 +1,4 @@
+// Package scope resolves symbols visible at a given source line using tree-sitter AST traversal.
 package scope
 
 import (

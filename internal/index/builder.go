@@ -1,3 +1,4 @@
+// Package index builds and caches structural indexes by walking source trees and parsing files with registered language parsers.
 package index
 
 import (

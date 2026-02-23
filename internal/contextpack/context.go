@@ -1,3 +1,4 @@
+// Package contextpack builds focus-aware code context around a source line, with optional semantic expansion via call graphs.
 package contextpack
 
 import (

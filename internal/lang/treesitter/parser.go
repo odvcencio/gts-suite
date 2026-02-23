@@ -1,3 +1,4 @@
+// Package treesitter implements the lang.Parser interface using gotreesitter for multi-language structural parsing.
 package treesitter
 
 import (

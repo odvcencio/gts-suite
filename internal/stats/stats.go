@@ -1,3 +1,4 @@
+// Package stats aggregates codebase metrics from a structural index: symbol kinds, language distribution, and file density.
 package stats
 
 import (

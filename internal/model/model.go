@@ -1,3 +1,4 @@
+// Package model defines the core data types for structural code indexing: Symbol, Reference, FileSummary, and Index.
 package model
 
 import "time"

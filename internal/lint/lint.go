@@ -1,3 +1,4 @@
+// Package lint evaluates structural linting rules and tree-sitter query patterns against a parsed index.
 package lint
 
 import (

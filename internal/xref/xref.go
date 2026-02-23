@@ -1,3 +1,4 @@
+// Package xref builds cross-reference graphs from structural indexes, enabling call graph traversal and dead code detection.
 package xref
 
 import (

@@ -1,3 +1,4 @@
+// Package query implements a selector DSL for matching symbols by kind, name, signature, receiver, file, and line range.
 package query
 
 import (

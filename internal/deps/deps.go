@@ -1,3 +1,4 @@
+// Package deps analyzes import dependency graphs at the package or file level from a structural index.
 package deps
 
 import (

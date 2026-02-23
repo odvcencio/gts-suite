@@ -1,3 +1,4 @@
+// Package chunk splits source files into AST-boundary chunks with token budget estimation for LLM context windows.
 package chunk
 
 import (

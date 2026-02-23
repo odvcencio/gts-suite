@@ -1,3 +1,4 @@
+// Package mcp exposes gts-suite tools as an MCP stdio server for AI agent integration via JSON-RPC.
 package mcp
 
 import (
