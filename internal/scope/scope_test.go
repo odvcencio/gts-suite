@@ -1,0 +1,123 @@
+package scope
+
+import (
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+
+	"gts-suite/internal/index"
+)
+
+func TestBuild_CollectsFunctionScope(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "sample.go")
+	source := `package sample
+
+import "fmt"
+
+const Pi = 3.14
+type Service struct{}
+
+func helper() {}
+
+func (s *Service) Work(input string) (out int) {
+	x := 1
+	if x > 0 {
+		y := input
+		fmt.Println(y)
+	}
+	out = x
+	return out
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+
+	report, err := Build(idx, Options{
+		FilePath: sourcePath,
+		Line:     13, // fmt.Println(y)
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	if report.Package != "sample" {
+		t.Fatalf("expected package sample, got %q", report.Package)
+	}
+	if report.Focus == nil || report.Focus.Name != "Work" {
+		t.Fatalf("expected focus Work, got %#v", report.Focus)
+	}
+
+	for _, name := range []string{"fmt", "Service", "helper", "s", "input", "out", "x", "y"} {
+		if !hasSymbol(report, name) {
+			t.Fatalf("expected symbol %q in scope report", name)
+		}
+	}
+}
+
+func TestBuild_RejectsNonGo(t *testing.T) {
+	idx, err := index.NewBuilder().BuildPath(".")
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+	_, err = Build(idx, Options{
+		FilePath: "README.md",
+		Line:     1,
+	})
+	if err == nil {
+		t.Fatal("expected non-Go file to fail")
+	}
+	if !strings.Contains(err.Error(), "supports Go files only") {
+		t.Fatalf("unexpected error: %v", err)
+	}
+}
+
+func TestBuild_ExcludesCrossTestnessSymbols(t *testing.T) {
+	tmpDir := t.TempDir()
+	mainSource := `package sample
+
+func MainOnly() {}
+`
+	testSource := `package sample
+
+func TestOnly() {}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainSource), 0o644); err != nil {
+		t.Fatalf("WriteFile main.go failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "main_test.go"), []byte(testSource), 0o644); err != nil {
+		t.Fatalf("WriteFile main_test.go failed: %v", err)
+	}
+
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+
+	report, err := Build(idx, Options{
+		FilePath: filepath.Join(tmpDir, "main.go"),
+		Line:     3,
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if hasSymbol(report, "TestOnly") {
+		t.Fatalf("did not expect TestOnly in non-test scope symbols: %+v", report.Symbols)
+	}
+}
+
+func hasSymbol(report Report, name string) bool {
+	for _, symbol := range report.Symbols {
+		if symbol.Name == name {
+			return true
+		}
+	}
+	return false
+}
