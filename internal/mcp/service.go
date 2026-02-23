@@ -40,239 +40,223 @@ func NewServiceWithOptions(defaultRoot, defaultCache string, opts ServiceOptions
 }
 
 func (s *Service) Tools() []Tool {
+	stringOrArray := []Property{
+		{Type: "string"},
+		{Type: "array", Items: &Property{Type: "string"}},
+	}
+
 	tools := []Tool{
 		{
 			Name:        "gts_grep",
 			Description: "Run structural selector matches across indexed symbols",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"selector": map[string]any{"type": "string"},
-					"path":     map[string]any{"type": "string"},
-					"cache":    map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"selector": {Type: "string"},
+					"path":     {Type: "string"},
+					"cache":    {Type: "string"},
 				},
-				"required": []string{"selector"},
-			},
+				Required: []string{"selector"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_map",
 			Description: "Emit table-of-contents structural summaries for indexed files",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":  map[string]any{"type": "string"},
-					"cache": map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":  {Type: "string"},
+					"cache": {Type: "string"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_query",
 			Description: "Run a raw tree-sitter S-expression query across indexed files",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"pattern": map[string]any{"type": "string", "description": "tree-sitter query pattern"},
-					"path":    map[string]any{"type": "string", "description": "index root path override"},
-					"cache":   map[string]any{"type": "string", "description": "index cache path override"},
-					"capture": map[string]any{
-						"oneOf": []any{
-							map[string]any{"type": "string"},
-							map[string]any{"type": "array", "items": map[string]any{"type": "string"}},
-						},
-					},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"pattern": {Type: "string", Description: "tree-sitter query pattern"},
+					"path":    {Type: "string", Description: "index root path override"},
+					"cache":   {Type: "string", Description: "index cache path override"},
+					"capture": {OneOf: stringOrArray},
 				},
-				"required": []string{"pattern"},
-			},
+				Required: []string{"pattern"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_refs",
 			Description: "Find indexed references by symbol name or regex",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"name":  map[string]any{"type": "string"},
-					"regex": map[string]any{"type": "boolean"},
-					"path":  map[string]any{"type": "string"},
-					"cache": map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"name":  {Type: "string"},
+					"regex": {Type: "boolean"},
+					"path":  {Type: "string"},
+					"cache": {Type: "string"},
 				},
-				"required": []string{"name"},
-			},
+				Required: []string{"name"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_context",
 			Description: "Pack focused context for a file and line",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"file":           map[string]any{"type": "string"},
-					"line":           map[string]any{"type": "integer"},
-					"tokens":         map[string]any{"type": "integer"},
-					"semantic":       map[string]any{"type": "boolean"},
-					"semantic_depth": map[string]any{"type": "integer"},
-					"root":           map[string]any{"type": "string"},
-					"cache":          map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"file":           {Type: "string"},
+					"line":           {Type: "integer"},
+					"tokens":         {Type: "integer"},
+					"semantic":       {Type: "boolean"},
+					"semantic_depth": {Type: "integer"},
+					"root":           {Type: "string"},
+					"cache":          {Type: "string"},
 				},
-				"required": []string{"file"},
-			},
+				Required: []string{"file"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_scope",
 			Description: "Resolve symbols in scope for a file and line",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"file":  map[string]any{"type": "string"},
-					"line":  map[string]any{"type": "integer"},
-					"root":  map[string]any{"type": "string"},
-					"cache": map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"file":  {Type: "string"},
+					"line":  {Type: "integer"},
+					"root":  {Type: "string"},
+					"cache": {Type: "string"},
 				},
-				"required": []string{"file"},
-			},
+				Required: []string{"file"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_deps",
 			Description: "Analyze dependency graph from structural imports",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":    map[string]any{"type": "string"},
-					"cache":   map[string]any{"type": "string"},
-					"by":      map[string]any{"type": "string"},
-					"top":     map[string]any{"type": "integer"},
-					"focus":   map[string]any{"type": "string"},
-					"depth":   map[string]any{"type": "integer"},
-					"reverse": map[string]any{"type": "boolean"},
-					"edges":   map[string]any{"type": "boolean"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":    {Type: "string"},
+					"cache":   {Type: "string"},
+					"by":      {Type: "string"},
+					"top":     {Type: "integer"},
+					"focus":   {Type: "string"},
+					"depth":   {Type: "integer"},
+					"reverse": {Type: "boolean"},
+					"edges":   {Type: "boolean"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_callgraph",
 			Description: "Traverse resolved call graph from matching callable roots",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"name":    map[string]any{"type": "string"},
-					"regex":   map[string]any{"type": "boolean"},
-					"path":    map[string]any{"type": "string"},
-					"cache":   map[string]any{"type": "string"},
-					"depth":   map[string]any{"type": "integer"},
-					"reverse": map[string]any{"type": "boolean"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"name":    {Type: "string"},
+					"regex":   {Type: "boolean"},
+					"path":    {Type: "string"},
+					"cache":   {Type: "string"},
+					"depth":   {Type: "integer"},
+					"reverse": {Type: "boolean"},
 				},
-				"required": []string{"name"},
-			},
+				Required: []string{"name"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_dead",
 			Description: "List callable definitions with zero incoming call references",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":                map[string]any{"type": "string"},
-					"cache":               map[string]any{"type": "string"},
-					"kind":                map[string]any{"type": "string"},
-					"include_entrypoints": map[string]any{"type": "boolean"},
-					"include_tests":       map[string]any{"type": "boolean"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":                {Type: "string"},
+					"cache":               {Type: "string"},
+					"kind":                {Type: "string"},
+					"include_entrypoints": {Type: "boolean"},
+					"include_tests":       {Type: "boolean"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_chunk",
 			Description: "Split code into AST-boundary chunks for retrieval/indexing",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":   map[string]any{"type": "string"},
-					"cache":  map[string]any{"type": "string"},
-					"tokens": map[string]any{"type": "integer"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":   {Type: "string"},
+					"cache":  {Type: "string"},
+					"tokens": {Type: "integer"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_lint",
 			Description: "Run structural lint rules and query-pattern rules against index",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":    map[string]any{"type": "string"},
-					"cache":   map[string]any{"type": "string"},
-					"rule":    map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
-					"pattern": map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":    {Type: "string"},
+					"cache":   {Type: "string"},
+					"rule":    {OneOf: stringOrArray},
+					"pattern": {OneOf: stringOrArray},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_refactor",
 			Description: "Apply structural declaration renames (dry-run by default)",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"selector":      map[string]any{"type": "string"},
-					"new_name":      map[string]any{"type": "string"},
-					"path":          map[string]any{"type": "string"},
-					"cache":         map[string]any{"type": "string"},
-					"engine":        map[string]any{"type": "string"},
-					"callsites":     map[string]any{"type": "boolean"},
-					"cross_package": map[string]any{"type": "boolean"},
-					"write":         map[string]any{"type": "boolean"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"selector":      {Type: "string"},
+					"new_name":      {Type: "string"},
+					"path":          {Type: "string"},
+					"cache":         {Type: "string"},
+					"engine":        {Type: "string"},
+					"callsites":     {Type: "boolean"},
+					"cross_package": {Type: "boolean"},
+					"write":         {Type: "boolean"},
 				},
-				"required": []string{"selector", "new_name"},
-			},
+				Required: []string{"selector", "new_name"},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_diff",
 			Description: "Structural diff between two snapshots (path or cache sources)",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"before_path":  map[string]any{"type": "string"},
-					"before_cache": map[string]any{"type": "string"},
-					"after_path":   map[string]any{"type": "string"},
-					"after_cache":  map[string]any{"type": "string"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"before_path":  {Type: "string"},
+					"before_cache": {Type: "string"},
+					"after_path":   {Type: "string"},
+					"after_cache":  {Type: "string"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_stats",
 			Description: "Report structural codebase metrics from an index",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":  map[string]any{"type": "string"},
-					"cache": map[string]any{"type": "string"},
-					"top":   map[string]any{"type": "integer"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":  {Type: "string"},
+					"cache": {Type: "string"},
+					"top":   {Type: "integer"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_files",
 			Description: "List indexed files with structural density filters",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":        map[string]any{"type": "string"},
-					"cache":       map[string]any{"type": "string"},
-					"language":    map[string]any{"type": "string"},
-					"min_symbols": map[string]any{"type": "integer"},
-					"sort":        map[string]any{"type": "string"},
-					"top":         map[string]any{"type": "integer"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":        {Type: "string"},
+					"cache":       {Type: "string"},
+					"language":    {Type: "string"},
+					"min_symbols": {Type: "integer"},
+					"sort":        {Type: "string"},
+					"top":         {Type: "integer"},
 				},
-			},
+			}.ToMap(),
 		},
 		{
 			Name:        "gts_bridge",
 			Description: "Map cross-component dependency bridges",
-			InputSchema: map[string]any{
-				"type": "object",
-				"properties": map[string]any{
-					"path":    map[string]any{"type": "string"},
-					"cache":   map[string]any{"type": "string"},
-					"top":     map[string]any{"type": "integer"},
-					"focus":   map[string]any{"type": "string"},
-					"depth":   map[string]any{"type": "integer"},
-					"reverse": map[string]any{"type": "boolean"},
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":    {Type: "string"},
+					"cache":   {Type: "string"},
+					"top":     {Type: "integer"},
+					"focus":   {Type: "string"},
+					"depth":   {Type: "integer"},
+					"reverse": {Type: "boolean"},
 				},
-			},
+			}.ToMap(),
 		},
 	}
 	for i := range tools {
