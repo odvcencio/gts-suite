@@ -40,6 +40,52 @@ func TestMain() {}
 	}
 }
 
+func TestBuildPath_Directory_MultiLanguageAutoRegistration(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	goSource := `package sample
+
+func Main() {}
+`
+	pythonSource := `class Worker:
+    def run(self):
+        return 1
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(goSource), 0o644); err != nil {
+		t.Fatalf("WriteFile main.go failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "worker.py"), []byte(pythonSource), 0o644); err != nil {
+		t.Fatalf("WriteFile worker.py failed: %v", err)
+	}
+
+	builder := NewBuilder()
+	idx, err := builder.BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+
+	if idx.FileCount() != 2 {
+		t.Fatalf("expected 2 indexed files, got %d", idx.FileCount())
+	}
+
+	foundPython := false
+	for _, file := range idx.Files {
+		if file.Path != "worker.py" {
+			continue
+		}
+		foundPython = true
+		if file.Language != "python" {
+			t.Fatalf("expected python language, got %q", file.Language)
+		}
+		if len(file.Symbols) == 0 {
+			t.Fatal("expected python symbols from tags query")
+		}
+	}
+	if !foundPython {
+		t.Fatal("expected worker.py in index output")
+	}
+}
+
 func TestBuildPathIncremental_ReusesUnchangedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 

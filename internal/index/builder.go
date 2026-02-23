@@ -12,8 +12,10 @@ import (
 	"sync"
 	"time"
 
+	"github.com/odvcencio/gotreesitter/grammars"
+
 	"gts-suite/internal/lang"
-	"gts-suite/internal/lang/golang"
+	"gts-suite/internal/lang/treesitter"
 	"gts-suite/internal/model"
 )
 
@@ -33,22 +35,59 @@ func NewBuilder() *Builder {
 	builder := &Builder{
 		parsers: make(map[string]lang.Parser),
 	}
-	builder.Register(".go", golang.NewParser())
+	builder.registerTreesitterParsers()
 	return builder
+}
+
+func (b *Builder) registerTreesitterParsers() {
+	entries := append([]grammars.LangEntry(nil), grammars.AllLanguages()...)
+	sort.Slice(entries, func(i, j int) bool {
+		return entries[i].Name < entries[j].Name
+	})
+
+	for _, entry := range entries {
+		if strings.TrimSpace(entry.TagsQuery) == "" {
+			continue
+		}
+
+		parser, err := treesitter.NewParser(entry)
+		if err != nil {
+			continue
+		}
+
+		for _, ext := range entry.Extensions {
+			normalized := normalizeExtension(ext)
+			if normalized == "" {
+				continue
+			}
+			if _, exists := b.parsers[normalized]; exists {
+				continue
+			}
+			b.parsers[normalized] = parser
+		}
+	}
 }
 
 func (b *Builder) Register(extension string, parser lang.Parser) {
 	if parser == nil {
 		return
 	}
-	normalized := strings.ToLower(strings.TrimSpace(extension))
+	normalized := normalizeExtension(extension)
 	if normalized == "" {
 		return
+	}
+	b.parsers[normalized] = parser
+}
+
+func normalizeExtension(extension string) string {
+	normalized := strings.ToLower(strings.TrimSpace(extension))
+	if normalized == "" {
+		return ""
 	}
 	if normalized[0] != '.' {
 		normalized = "." + normalized
 	}
-	b.parsers[normalized] = parser
+	return normalized
 }
 
 func (b *Builder) BuildPath(path string) (*model.Index, error) {
