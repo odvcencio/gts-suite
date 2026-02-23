@@ -30,7 +30,7 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint", "gts_refactor", "gts_diff", "gts_stats", "gts_files", "gts_bridge"} {
+	for _, name := range []string{"gts_grep", "gts_map", "gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint", "gts_refactor", "gts_diff", "gts_stats", "gts_files", "gts_bridge"} {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
@@ -144,6 +144,32 @@ func B() {
 	}
 	if refsResult["count"].(int) != 1 {
 		t.Fatalf("expected refs count=1, got %#v", refsResult["count"])
+	}
+
+	grepResultRaw, err := service.Call("gts_grep", map[string]any{
+		"selector": "function_definition[name=/^A$/]",
+	})
+	if err != nil {
+		t.Fatalf("gts_grep call failed: %v", err)
+	}
+	grepResult, ok := grepResultRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected grep result map, got %T", grepResultRaw)
+	}
+	if grepResult["count"].(int) != 1 {
+		t.Fatalf("expected grep count=1, got %#v", grepResult["count"])
+	}
+
+	mapResultRaw, err := service.Call("gts_map", map[string]any{})
+	if err != nil {
+		t.Fatalf("gts_map call failed: %v", err)
+	}
+	mapResult, ok := mapResultRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected map result map, got %T", mapResultRaw)
+	}
+	if mapResult["file_count"].(int) != 1 {
+		t.Fatalf("expected map file_count=1, got %#v", mapResult["file_count"])
 	}
 
 	queryResultRaw, err := service.Call("gts_query", map[string]any{

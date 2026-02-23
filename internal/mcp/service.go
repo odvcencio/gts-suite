@@ -62,6 +62,30 @@ func NewServiceWithOptions(defaultRoot, defaultCache string, opts ServiceOptions
 func (s *Service) Tools() []Tool {
 	tools := []Tool{
 		{
+			Name:        "gts_grep",
+			Description: "Run structural selector matches across indexed symbols",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"selector": map[string]any{"type": "string"},
+					"path":     map[string]any{"type": "string"},
+					"cache":    map[string]any{"type": "string"},
+				},
+				"required": []string{"selector"},
+			},
+		},
+		{
+			Name:        "gts_map",
+			Description: "Emit table-of-contents structural summaries for indexed files",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":  map[string]any{"type": "string"},
+					"cache": map[string]any{"type": "string"},
+				},
+			},
+		},
+		{
 			Name:        "gts_query",
 			Description: "Run a raw tree-sitter S-expression query across indexed files",
 			InputSchema: map[string]any{
@@ -359,6 +383,10 @@ func normalizeRequiredKeys(raw any, properties map[string]any) []string {
 
 func (s *Service) Call(name string, args map[string]any) (any, error) {
 	switch strings.TrimSpace(name) {
+	case "gts_grep":
+		return s.callGrep(args)
+	case "gts_map":
+		return s.callMap(args)
 	case "gts_query":
 		return s.callQuery(args)
 	case "gts_refs":
@@ -390,6 +418,112 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
+}
+
+func (s *Service) callGrep(args map[string]any) (any, error) {
+	selectorRaw, err := requiredStringArg(args, "selector")
+	if err != nil {
+		return nil, err
+	}
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	selector, err := query.ParseSelector(selectorRaw)
+	if err != nil {
+		return nil, err
+	}
+
+	type grepMatch struct {
+		File      string `json:"file"`
+		Kind      string `json:"kind"`
+		Name      string `json:"name"`
+		Signature string `json:"signature,omitempty"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+	}
+
+	matches := make([]grepMatch, 0, idx.SymbolCount())
+	for _, file := range idx.Files {
+		for _, symbol := range file.Symbols {
+			if !selector.Match(symbol) {
+				continue
+			}
+			matches = append(matches, grepMatch{
+				File:      file.Path,
+				Kind:      symbol.Kind,
+				Name:      symbol.Name,
+				Signature: symbol.Signature,
+				StartLine: symbol.StartLine,
+				EndLine:   symbol.EndLine,
+			})
+		}
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			if matches[i].StartLine == matches[j].StartLine {
+				return matches[i].Name < matches[j].Name
+			}
+			return matches[i].StartLine < matches[j].StartLine
+		}
+		return matches[i].File < matches[j].File
+	})
+
+	return map[string]any{
+		"matches": matches,
+		"count":   len(matches),
+	}, nil
+}
+
+func (s *Service) callMap(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	type mapFileSummary struct {
+		Path           string            `json:"path"`
+		Language       string            `json:"language"`
+		Imports        []string          `json:"imports,omitempty"`
+		Symbols        []model.Symbol    `json:"symbols,omitempty"`
+		References     []model.Reference `json:"references,omitempty"`
+		SymbolCount    int               `json:"symbol_count"`
+		ReferenceCount int               `json:"reference_count"`
+	}
+
+	files := make([]mapFileSummary, 0, len(idx.Files))
+	for _, file := range idx.Files {
+		files = append(files, mapFileSummary{
+			Path:           file.Path,
+			Language:       file.Language,
+			Imports:        append([]string(nil), file.Imports...),
+			Symbols:        append([]model.Symbol(nil), file.Symbols...),
+			References:     append([]model.Reference(nil), file.References...),
+			SymbolCount:    len(file.Symbols),
+			ReferenceCount: len(file.References),
+		})
+	}
+	sort.Slice(files, func(i, j int) bool {
+		return files[i].Path < files[j].Path
+	})
+
+	return map[string]any{
+		"root":            idx.Root,
+		"generated_at":    idx.GeneratedAt,
+		"file_count":      len(files),
+		"symbol_count":    idx.SymbolCount(),
+		"reference_count": idx.ReferenceCount(),
+		"files":           files,
+		"errors":          idx.Errors,
+	}, nil
 }
 
 func (s *Service) callQuery(args map[string]any) (any, error) {
