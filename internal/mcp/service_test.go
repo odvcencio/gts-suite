@@ -6,10 +6,13 @@ import (
 	"strings"
 	"testing"
 
+	"gts-suite/internal/bridge"
 	"gts-suite/internal/chunk"
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
+	"gts-suite/internal/files"
 	"gts-suite/internal/refactor"
+	"gts-suite/internal/stats"
 	"gts-suite/internal/structdiff"
 	"gts-suite/internal/xref"
 )
@@ -25,7 +28,7 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint", "gts_refactor", "gts_diff"} {
+	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint", "gts_refactor", "gts_diff", "gts_stats", "gts_files", "gts_bridge"} {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
@@ -338,5 +341,76 @@ func B() {}
 	}
 	if diffReport.Stats.AddedSymbols == 0 {
 		t.Fatalf("expected added symbols in diff report, got %+v", diffReport.Stats)
+	}
+}
+
+func TestServiceStatsFilesBridge(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module sample\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile go.mod failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "internal", "x"), 0o755); err != nil {
+		t.Fatalf("MkdirAll failed: %v", err)
+	}
+	mainSource := `package main
+
+import "sample/internal/x"
+
+func main() { x.Value() }
+`
+	xSource := `package x
+
+func Value() {}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.go"), []byte(mainSource), 0o644); err != nil {
+		t.Fatalf("WriteFile main.go failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "internal", "x", "x.go"), []byte(xSource), 0o644); err != nil {
+		t.Fatalf("WriteFile x.go failed: %v", err)
+	}
+
+	service := NewService(tmpDir, "")
+
+	statsRaw, err := service.Call("gts_stats", map[string]any{
+		"top": 5,
+	})
+	if err != nil {
+		t.Fatalf("gts_stats call failed: %v", err)
+	}
+	statsReport, ok := statsRaw.(stats.Report)
+	if !ok {
+		t.Fatalf("expected stats.Report, got %T", statsRaw)
+	}
+	if statsReport.FileCount == 0 || statsReport.SymbolCount == 0 {
+		t.Fatalf("expected non-empty stats report, got %+v", statsReport)
+	}
+
+	filesRaw, err := service.Call("gts_files", map[string]any{
+		"sort": "symbols",
+		"top":  10,
+	})
+	if err != nil {
+		t.Fatalf("gts_files call failed: %v", err)
+	}
+	filesReport, ok := filesRaw.(files.Report)
+	if !ok {
+		t.Fatalf("expected files.Report, got %T", filesRaw)
+	}
+	if filesReport.TotalFiles == 0 || len(filesReport.Entries) == 0 {
+		t.Fatalf("expected non-empty files report, got %+v", filesReport)
+	}
+
+	bridgeRaw, err := service.Call("gts_bridge", map[string]any{
+		"top": 5,
+	})
+	if err != nil {
+		t.Fatalf("gts_bridge call failed: %v", err)
+	}
+	bridgeReport, ok := bridgeRaw.(bridge.Report)
+	if !ok {
+		t.Fatalf("expected bridge.Report, got %T", bridgeRaw)
+	}
+	if bridgeReport.ComponentCount == 0 {
+		t.Fatalf("expected non-empty bridge report, got %+v", bridgeReport)
 	}
 }

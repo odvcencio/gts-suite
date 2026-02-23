@@ -11,15 +11,18 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
+	"gts-suite/internal/bridge"
 	"gts-suite/internal/chunk"
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
+	"gts-suite/internal/files"
 	"gts-suite/internal/index"
 	"gts-suite/internal/lint"
 	"gts-suite/internal/model"
 	"gts-suite/internal/query"
 	"gts-suite/internal/refactor"
 	gtsscope "gts-suite/internal/scope"
+	"gts-suite/internal/stats"
 	"gts-suite/internal/structdiff"
 	"gts-suite/internal/xref"
 )
@@ -225,6 +228,48 @@ func (s *Service) Tools() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "gts_stats",
+			Description: "Report structural codebase metrics from an index",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":  map[string]any{"type": "string"},
+					"cache": map[string]any{"type": "string"},
+					"top":   map[string]any{"type": "integer"},
+				},
+			},
+		},
+		{
+			Name:        "gts_files",
+			Description: "List indexed files with structural density filters",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":        map[string]any{"type": "string"},
+					"cache":       map[string]any{"type": "string"},
+					"language":    map[string]any{"type": "string"},
+					"min_symbols": map[string]any{"type": "integer"},
+					"sort":        map[string]any{"type": "string"},
+					"top":         map[string]any{"type": "integer"},
+				},
+			},
+		},
+		{
+			Name:        "gts_bridge",
+			Description: "Map cross-component dependency bridges",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":    map[string]any{"type": "string"},
+					"cache":   map[string]any{"type": "string"},
+					"top":     map[string]any{"type": "integer"},
+					"focus":   map[string]any{"type": "string"},
+					"depth":   map[string]any{"type": "integer"},
+					"reverse": map[string]any{"type": "boolean"},
+				},
+			},
+		},
 	}
 }
 
@@ -252,6 +297,12 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callRefactor(args)
 	case "gts_diff":
 		return s.callDiff(args)
+	case "gts_stats":
+		return s.callStats(args)
+	case "gts_files":
+		return s.callFiles(args)
+	case "gts_bridge":
+		return s.callBridge(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -854,6 +905,75 @@ func (s *Service) callDiff(args map[string]any) (any, error) {
 	}
 
 	report := structdiff.Compare(beforeIndex, afterIndex)
+	return report, nil
+}
+
+func (s *Service) callStats(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	top := intArg(args, "top", 10)
+	if top <= 0 {
+		return nil, fmt.Errorf("top must be > 0")
+	}
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+	report, err := stats.Build(idx, stats.Options{
+		TopFiles: top,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
+func (s *Service) callFiles(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+	report, err := files.Build(idx, files.Options{
+		Language:   stringArg(args, "language"),
+		MinSymbols: intArg(args, "min_symbols", 0),
+		SortBy:     s.stringArgOrDefault(args, "sort", "symbols"),
+		Top:        intArg(args, "top", 50),
+	})
+	if err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
+func (s *Service) callBridge(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	top := intArg(args, "top", 20)
+	depth := intArg(args, "depth", 1)
+	if top <= 0 {
+		return nil, fmt.Errorf("top must be > 0")
+	}
+	if depth <= 0 {
+		return nil, fmt.Errorf("depth must be > 0")
+	}
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+	report, err := bridge.Build(idx, bridge.Options{
+		Top:     top,
+		Focus:   stringArg(args, "focus"),
+		Depth:   depth,
+		Reverse: boolArg(args, "reverse", false),
+	})
+	if err != nil {
+		return nil, err
+	}
 	return report, nil
 }
 

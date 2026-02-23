@@ -103,7 +103,7 @@ Supported kinds in this version:
 - Structural diff detects symbol additions/removals/modifications and import changes.
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
-- MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, `gts_dead`, `gts_chunk`, `gts_lint`, `gts_refactor`, and `gts_diff` via stdio JSON-RPC.
+- MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, `gts_dead`, `gts_chunk`, `gts_lint`, `gts_refactor`, `gts_diff`, `gts_stats`, `gts_files`, and `gts_bridge` via stdio JSON-RPC.
 - MCP write operations are disabled by default; enable explicitly with `--allow-writes` for mutating tools.
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
