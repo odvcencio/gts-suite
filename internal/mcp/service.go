@@ -16,6 +16,7 @@ import (
 	"gts-suite/internal/index"
 	"gts-suite/internal/model"
 	gtsscope "gts-suite/internal/scope"
+	"gts-suite/internal/xref"
 )
 
 type Tool struct {
@@ -123,6 +124,36 @@ func (s *Service) Tools() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "gts_callgraph",
+			Description: "Traverse resolved call graph from matching callable roots",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"name":    map[string]any{"type": "string"},
+					"regex":   map[string]any{"type": "boolean"},
+					"path":    map[string]any{"type": "string"},
+					"cache":   map[string]any{"type": "string"},
+					"depth":   map[string]any{"type": "integer"},
+					"reverse": map[string]any{"type": "boolean"},
+				},
+				"required": []string{"name"},
+			},
+		},
+		{
+			Name:        "gts_dead",
+			Description: "List callable definitions with zero incoming call references",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":                map[string]any{"type": "string"},
+					"cache":               map[string]any{"type": "string"},
+					"kind":                map[string]any{"type": "string"},
+					"include_entrypoints": map[string]any{"type": "boolean"},
+					"include_tests":       map[string]any{"type": "boolean"},
+				},
+			},
+		},
 	}
 }
 
@@ -138,6 +169,10 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callScope(args)
 	case "gts_deps":
 		return s.callDeps(args)
+	case "gts_callgraph":
+		return s.callCallgraph(args)
+	case "gts_dead":
+		return s.callDead(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -465,6 +500,130 @@ func (s *Service) callDeps(args map[string]any) (any, error) {
 	return report, nil
 }
 
+func (s *Service) callCallgraph(args map[string]any) (any, error) {
+	name, err := requiredStringArg(args, "name")
+	if err != nil {
+		return nil, err
+	}
+	regexMode := boolArg(args, "regex", false)
+	depth := intArg(args, "depth", 2)
+	reverse := boolArg(args, "reverse", false)
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	graph, err := xref.Build(idx)
+	if err != nil {
+		return nil, err
+	}
+	roots, err := graph.FindDefinitions(name, regexMode)
+	if err != nil {
+		return nil, err
+	}
+	rootIDs := make([]string, 0, len(roots))
+	for _, root := range roots {
+		rootIDs = append(rootIDs, root.ID)
+	}
+	walk := graph.Walk(rootIDs, depth, reverse)
+
+	return map[string]any{
+		"roots":                 walk.Roots,
+		"nodes":                 walk.Nodes,
+		"edges":                 walk.Edges,
+		"depth":                 walk.Depth,
+		"reverse":               walk.Reverse,
+		"unresolved_call_count": len(graph.Unresolved),
+	}, nil
+}
+
+func (s *Service) callDead(args map[string]any) (any, error) {
+	mode := strings.ToLower(strings.TrimSpace(s.stringArgOrDefault(args, "kind", "callable")))
+	switch mode {
+	case "callable", "function", "method":
+	default:
+		return nil, fmt.Errorf("unsupported kind %q (expected callable|function|method)", mode)
+	}
+
+	includeEntrypoints := boolArg(args, "include_entrypoints", false)
+	includeTests := boolArg(args, "include_tests", false)
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	graph, err := xref.Build(idx)
+	if err != nil {
+		return nil, err
+	}
+
+	type deadMatch struct {
+		File      string `json:"file"`
+		Package   string `json:"package"`
+		Kind      string `json:"kind"`
+		Name      string `json:"name"`
+		Signature string `json:"signature,omitempty"`
+		StartLine int    `json:"start_line"`
+		EndLine   int    `json:"end_line"`
+		Incoming  int    `json:"incoming"`
+		Outgoing  int    `json:"outgoing"`
+	}
+
+	matches := make([]deadMatch, 0, 64)
+	scanned := 0
+	for _, definition := range graph.Definitions {
+		if !deadKindAllowed(definition, mode) {
+			continue
+		}
+		if !includeEntrypoints && isEntrypointDefinition(definition) {
+			continue
+		}
+		if !includeTests && isTestSourceFile(definition.File) {
+			continue
+		}
+
+		scanned++
+		incoming := graph.IncomingCount(definition.ID)
+		if incoming > 0 {
+			continue
+		}
+		matches = append(matches, deadMatch{
+			File:      definition.File,
+			Package:   definition.Package,
+			Kind:      definition.Kind,
+			Name:      definition.Name,
+			Signature: definition.Signature,
+			StartLine: definition.StartLine,
+			EndLine:   definition.EndLine,
+			Incoming:  incoming,
+			Outgoing:  graph.OutgoingCount(definition.ID),
+		})
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			if matches[i].StartLine == matches[j].StartLine {
+				return matches[i].Name < matches[j].Name
+			}
+			return matches[i].StartLine < matches[j].StartLine
+		}
+		return matches[i].File < matches[j].File
+	})
+
+	return map[string]any{
+		"kind":    mode,
+		"scanned": scanned,
+		"count":   len(matches),
+		"matches": matches,
+	}, nil
+}
+
 func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, error) {
 	if strings.TrimSpace(cachePath) != "" {
 		return index.Load(cachePath)
@@ -570,4 +729,28 @@ func compactNodeText(text string) string {
 		return trimmed
 	}
 	return trimmed[:maxLen] + "..."
+}
+
+func deadKindAllowed(definition xref.Definition, mode string) bool {
+	switch mode {
+	case "callable":
+		return definition.Callable
+	case "function":
+		return definition.Kind == "function_definition"
+	case "method":
+		return definition.Kind == "method_definition"
+	default:
+		return false
+	}
+}
+
+func isEntrypointDefinition(definition xref.Definition) bool {
+	if definition.Kind != "function_definition" {
+		return false
+	}
+	return definition.Name == "main" || definition.Name == "init"
+}
+
+func isTestSourceFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(path)), "_test.go")
 }

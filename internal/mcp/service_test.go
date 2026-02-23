@@ -7,6 +7,7 @@ import (
 
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
+	"gts-suite/internal/xref"
 )
 
 func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
@@ -20,7 +21,7 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps"} {
+	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead"} {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
@@ -132,5 +133,61 @@ func work() {
 	}
 	if depsResult.Mode != "package" {
 		t.Fatalf("expected deps mode package, got %q", depsResult.Mode)
+	}
+}
+
+func TestServiceCallgraphAndDead(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func Used() {}
+func Dead() {}
+
+func main() {
+	Used()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	service := NewService(tmpDir, "")
+	callgraphRaw, err := service.Call("gts_callgraph", map[string]any{
+		"name":    "main",
+		"depth":   2,
+		"reverse": false,
+	})
+	if err != nil {
+		t.Fatalf("gts_callgraph call failed: %v", err)
+	}
+	callgraph, ok := callgraphRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected callgraph map result, got %T", callgraphRaw)
+	}
+	edges, ok := callgraph["edges"].([]xref.Edge)
+	if !ok {
+		t.Fatalf("expected callgraph edges slice, got %T", callgraph["edges"])
+	}
+	if len(edges) != 1 {
+		t.Fatalf("expected 1 callgraph edge, got %d", len(edges))
+	}
+
+	deadRaw, err := service.Call("gts_dead", map[string]any{
+		"kind": "function",
+	})
+	if err != nil {
+		t.Fatalf("gts_dead call failed: %v", err)
+	}
+	dead, ok := deadRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected dead map result, got %T", deadRaw)
+	}
+	count, ok := dead["count"].(int)
+	if !ok {
+		t.Fatalf("expected dead count int, got %T", dead["count"])
+	}
+	if count != 1 {
+		t.Fatalf("expected dead count=1, got %d", count)
 	}
 }
