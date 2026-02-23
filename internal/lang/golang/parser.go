@@ -2,12 +2,16 @@ package golang
 
 import (
 	"bytes"
+	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/printer"
 	"go/token"
 	"sort"
 	"strings"
+
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 
 	"gts-suite/internal/model"
 )
@@ -23,6 +27,86 @@ func (p *Parser) Language() string {
 }
 
 func (p *Parser) Parse(path string, src []byte) (model.FileSummary, error) {
+	summary, err := p.parseWithTreeSitter(path, src)
+	if err == nil {
+		return summary, nil
+	}
+	return p.parseWithGoAST(path, src)
+}
+
+func (p *Parser) parseWithTreeSitter(path string, src []byte) (model.FileSummary, error) {
+	entry := grammars.DetectLanguage(path)
+	if entry == nil || entry.Name != p.Language() {
+		return model.FileSummary{}, fmt.Errorf("unsupported go source: %s", path)
+	}
+
+	bound, err := grammars.ParseFile(path, src)
+	if err != nil {
+		return model.FileSummary{}, err
+	}
+	defer bound.Release()
+
+	root := bound.RootNode()
+	if root == nil {
+		return model.FileSummary{}, fmt.Errorf("gotreesitter returned nil root")
+	}
+	rootType := bound.NodeType(root)
+	// Some parse failures currently return an empty root type with no children.
+	if rootType == "" || (len(bytes.TrimSpace(src)) > 0 && root.ChildCount() == 0) {
+		return model.FileSummary{}, fmt.Errorf("gotreesitter parse did not produce a valid go root")
+	}
+
+	summary := model.FileSummary{
+		Path:     path,
+		Language: p.Language(),
+	}
+
+	imports := map[string]struct{}{}
+	gotreesitter.Walk(root, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		switch bound.NodeType(node) {
+		case "import_spec":
+			path := importPathFromSpec(bound, node)
+			if path != "" {
+				imports[path] = struct{}{}
+			}
+		case "function_declaration":
+			symbol, ok := functionSymbolFromNode(bound, node)
+			if ok {
+				summary.Symbols = append(summary.Symbols, symbol)
+			}
+		case "method_declaration":
+			symbol, ok := methodSymbolFromNode(bound, node)
+			if ok {
+				summary.Symbols = append(summary.Symbols, symbol)
+			}
+		case "type_spec", "type_alias":
+			symbol, ok := typeSymbolFromNode(bound, node)
+			if ok {
+				summary.Symbols = append(summary.Symbols, symbol)
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+
+	if len(imports) > 0 {
+		summary.Imports = make([]string, 0, len(imports))
+		for imp := range imports {
+			summary.Imports = append(summary.Imports, imp)
+		}
+		sort.Strings(summary.Imports)
+	}
+
+	sort.Slice(summary.Symbols, func(i, j int) bool {
+		if summary.Symbols[i].StartLine == summary.Symbols[j].StartLine {
+			return summary.Symbols[i].Name < summary.Symbols[j].Name
+		}
+		return summary.Symbols[i].StartLine < summary.Symbols[j].StartLine
+	})
+
+	return summary, nil
+}
+
+func (p *Parser) parseWithGoAST(path string, src []byte) (model.FileSummary, error) {
 	fset := token.NewFileSet()
 	file, err := parser.ParseFile(fset, path, src, parser.SkipObjectResolution)
 	if err != nil {
@@ -92,6 +176,190 @@ func (p *Parser) Parse(path string, src []byte) (model.FileSummary, error) {
 	})
 
 	return summary, nil
+}
+
+func importPathFromSpec(bound *gotreesitter.BoundTree, node *gotreesitter.Node) string {
+	if node == nil {
+		return ""
+	}
+
+	for i := node.ChildCount() - 1; i >= 0; i-- {
+		child := node.Child(i)
+		typeName := bound.NodeType(child)
+		if typeName != "interpreted_string_literal" && typeName != "raw_string_literal" {
+			continue
+		}
+		text := strings.TrimSpace(bound.NodeText(child))
+		text = strings.Trim(text, "\"`")
+		if text != "" {
+			return text
+		}
+	}
+	return ""
+}
+
+func functionSymbolFromNode(bound *gotreesitter.BoundTree, node *gotreesitter.Node) (model.Symbol, bool) {
+	name := ""
+	typeParams := ""
+	params := ""
+	result := ""
+	seenName := false
+
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		typeName := bound.NodeType(child)
+		if !child.IsNamed() {
+			continue
+		}
+
+		switch {
+		case (typeName == "identifier" || typeName == "field_identifier") && name == "":
+			name = normalizeInline(bound.NodeText(child))
+			seenName = true
+		case typeName == "type_parameter_list" && seenName && typeParams == "":
+			typeParams = normalizeInline(bound.NodeText(child))
+		case typeName == "parameter_list" && seenName && params == "":
+			params = normalizeInline(bound.NodeText(child))
+		case typeName != "block" && seenName && params != "" && result == "":
+			result = normalizeInline(bound.NodeText(child))
+		}
+	}
+
+	if name == "" {
+		return model.Symbol{}, false
+	}
+
+	start, end := lineSpanNode(node)
+	signature := "func " + name
+	if typeParams != "" {
+		signature += typeParams
+	}
+	if params == "" {
+		signature += "()"
+	} else {
+		signature += params
+	}
+	if result != "" {
+		signature += " " + result
+	}
+
+	return model.Symbol{
+		Kind:      "function_definition",
+		Name:      name,
+		Signature: signature,
+		StartLine: start,
+		EndLine:   end,
+	}, true
+}
+
+func methodSymbolFromNode(bound *gotreesitter.BoundTree, node *gotreesitter.Node) (model.Symbol, bool) {
+	receiver := ""
+	name := ""
+	typeParams := ""
+	params := ""
+	result := ""
+	seenName := false
+
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		typeName := bound.NodeType(child)
+		if !child.IsNamed() {
+			continue
+		}
+
+		switch {
+		case typeName == "parameter_list" && !seenName && receiver == "":
+			receiver = normalizeInline(bound.NodeText(child))
+		case (typeName == "field_identifier" || typeName == "identifier") && name == "":
+			name = normalizeInline(bound.NodeText(child))
+			seenName = true
+		case typeName == "type_parameter_list" && seenName && typeParams == "":
+			typeParams = normalizeInline(bound.NodeText(child))
+		case typeName == "parameter_list" && seenName && params == "":
+			params = normalizeInline(bound.NodeText(child))
+		case typeName != "block" && seenName && params != "" && result == "":
+			result = normalizeInline(bound.NodeText(child))
+		}
+	}
+
+	if name == "" {
+		return model.Symbol{}, false
+	}
+
+	start, end := lineSpanNode(node)
+	signature := "func "
+	if receiver != "" {
+		signature += receiver + " "
+	}
+	signature += name
+	if typeParams != "" {
+		signature += typeParams
+	}
+	if params == "" {
+		signature += "()"
+	} else {
+		signature += params
+	}
+	if result != "" {
+		signature += " " + result
+	}
+
+	return model.Symbol{
+		Kind:      "method_definition",
+		Name:      name,
+		Signature: signature,
+		Receiver:  receiver,
+		StartLine: start,
+		EndLine:   end,
+	}, true
+}
+
+func typeSymbolFromNode(bound *gotreesitter.BoundTree, node *gotreesitter.Node) (model.Symbol, bool) {
+	name := ""
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		typeName := bound.NodeType(child)
+		if typeName == "type_identifier" || typeName == "identifier" {
+			name = normalizeInline(bound.NodeText(child))
+			break
+		}
+	}
+	if name == "" {
+		return model.Symbol{}, false
+	}
+
+	start, end := lineSpanNode(node)
+	signature := "type " + normalizeInline(bound.NodeText(node))
+	return model.Symbol{
+		Kind:      "type_definition",
+		Name:      name,
+		Signature: signature,
+		StartLine: start,
+		EndLine:   end,
+	}, true
+}
+
+func lineSpanNode(node *gotreesitter.Node) (int, int) {
+	if node == nil {
+		return 0, 0
+	}
+	start := int(node.StartPoint().Row) + 1
+	end := int(node.EndPoint().Row) + 1
+	if end < start {
+		end = start
+	}
+	return start, end
+}
+
+func normalizeInline(text string) string {
+	parts := strings.Fields(strings.TrimSpace(text))
+	if len(parts) == 0 {
+		return ""
+	}
+	return strings.Join(parts, " ")
 }
 
 func lineSpan(fset *token.FileSet, node ast.Node) (int, int) {

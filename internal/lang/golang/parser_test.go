@@ -51,6 +51,36 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func TestParseSupportsGenerics(t *testing.T) {
+	const source = `package demo
+
+type Box[T any] struct {
+	Value T
+}
+
+func Map[T any, R any](in []T, fn func(T) R) []R {
+	out := make([]R, 0, len(in))
+	for _, item := range in {
+		out = append(out, fn(item))
+	}
+	return out
+}
+`
+
+	parser := NewParser()
+	summary, err := parser.Parse("generic.go", []byte(source))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+
+	if !hasSymbol(summary, "type_definition", "Box") {
+		t.Fatal("expected type_definition Box")
+	}
+	if !hasSymbol(summary, "function_definition", "Map") {
+		t.Fatal("expected function_definition Map")
+	}
+}
+
 func hasSymbol(summary model.FileSummary, kind, name string) bool {
 	for _, symbol := range summary.Symbols {
 		if symbol.Kind == kind && symbol.Name == name {

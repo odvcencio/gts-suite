@@ -18,7 +18,7 @@ Bootstrap implementation of a gotreesitter-style CLI suite with shared indexing 
 - `gtscontext`: Pack focused context around a file + line for agent token budgets.
 - `gtslint`: Run structural lint rules against indexed symbols.
 
-This first cut includes Go parsing (`.go`) with deterministic JSON output for agent use.
+This first cut includes Go parsing (`.go`) through `gotreesitter` with deterministic JSON output for agent use.
 
 ## Quickstart
 
@@ -76,7 +76,7 @@ Supported kinds in this version:
 
 ## Current scope
 
-- Go-only structural extraction (`go/parser`-backed).
+- Go-only structural extraction (gotreesitter-backed, with stdlib fallback for parser edge cases).
 - Cache format: JSON (`.gts/index.json` by default).
 - Incremental cache reuse based on file size + mtime metadata.
 - Event-driven watch mode via `fsnotify` with polling fallback (`--poll` to force polling).
@@ -97,7 +97,7 @@ Supported kinds in this version:
 
 ## Next increments
 
-- Add parser-backed adapters for gotreesitter language modules.
+- Expand index extraction across additional gotreesitter language modules.
 - Expand selector grammar (field filters, boolean filters).
 - Extend `gtsrefactor` to cross-package method and interface usage resolution.
 - Expand `gtsscope` beyond Go with parser-backed symbol tables.

@@ -5,6 +5,7 @@ go 1.25
 require (
 	github.com/fsnotify/fsnotify v1.9.0
 	github.com/odvcencio/fluffyui v0.0.0
+	github.com/odvcencio/gotreesitter v0.0.0
 )
 
 require (
@@ -17,3 +18,5 @@ require (
 )
 
 replace github.com/odvcencio/fluffyui => /home/draco/work/fluffyui
+
+replace github.com/odvcencio/gotreesitter => /home/draco/work/gotreesitter
