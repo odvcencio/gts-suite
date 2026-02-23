@@ -1,6 +1,7 @@
 package refactor
 
 import (
+	"bufio"
 	"fmt"
 	"go/ast"
 	"go/importer"
@@ -17,8 +18,9 @@ import (
 )
 
 type Options struct {
-	Write           bool
-	UpdateCallsites bool
+	Write                 bool
+	UpdateCallsites       bool
+	CrossPackageCallsites bool
 }
 
 type Edit struct {
@@ -36,18 +38,19 @@ type Edit struct {
 }
 
 type Report struct {
-	Root             string `json:"root"`
-	Selector         string `json:"selector"`
-	NewName          string `json:"new_name"`
-	Write            bool   `json:"write"`
-	UpdateCallsites  bool   `json:"update_callsites"`
-	MatchCount       int    `json:"match_count"`
-	PlannedEdits     int    `json:"planned_edits"`
-	PlannedDeclEdits int    `json:"planned_declaration_edits"`
-	PlannedUseEdits  int    `json:"planned_callsite_edits"`
-	AppliedEdits     int    `json:"applied_edits"`
-	ChangedFiles     int    `json:"changed_files"`
-	Edits            []Edit `json:"edits,omitempty"`
+	Root                  string `json:"root"`
+	Selector              string `json:"selector"`
+	NewName               string `json:"new_name"`
+	Write                 bool   `json:"write"`
+	UpdateCallsites       bool   `json:"update_callsites"`
+	CrossPackageCallsites bool   `json:"cross_package_callsites"`
+	MatchCount            int    `json:"match_count"`
+	PlannedEdits          int    `json:"planned_edits"`
+	PlannedDeclEdits      int    `json:"planned_declaration_edits"`
+	PlannedUseEdits       int    `json:"planned_callsite_edits"`
+	AppliedEdits          int    `json:"applied_edits"`
+	ChangedFiles          int    `json:"changed_files"`
+	Edits                 []Edit `json:"edits,omitempty"`
 }
 
 func RenameDeclarations(idx *model.Index, selector query.Selector, newName string, opts Options) (Report, error) {
@@ -60,11 +63,12 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 	}
 
 	report := Report{
-		Root:            idx.Root,
-		Selector:        selector.Raw,
-		NewName:         newName,
-		Write:           opts.Write,
-		UpdateCallsites: opts.UpdateCallsites,
+		Root:                  idx.Root,
+		Selector:              selector.Raw,
+		NewName:               newName,
+		Write:                 opts.Write,
+		UpdateCallsites:       opts.UpdateCallsites,
+		CrossPackageCallsites: opts.CrossPackageCallsites,
 	}
 
 	targetsByFile := make(map[string][]model.Symbol)
@@ -130,6 +134,20 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 			} else {
 				report.PlannedUseEdits++
 			}
+		}
+	}
+
+	if opts.UpdateCallsites && opts.CrossPackageCallsites {
+		crossEdits, crossSkips, absPaths, sources, err := planCrossPackageCallsiteEdits(idx, targetsByFile, newName)
+		if err != nil {
+			return report, err
+		}
+		report.Edits = append(report.Edits, crossSkips...)
+		for _, edit := range crossEdits {
+			plannedByFile[edit.File] = append(plannedByFile[edit.File], edit)
+			absByFile[edit.File] = absPaths[edit.File]
+			sourceByFile[edit.File] = sources[edit.File]
+			report.PlannedUseEdits++
 		}
 	}
 	report.PlannedEdits = report.PlannedDeclEdits + report.PlannedUseEdits
@@ -199,12 +217,6 @@ func supportsDeclarationRename(kind string) bool {
 	default:
 		return false
 	}
-}
-
-type declKey struct {
-	kind string
-	name string
-	line int
 }
 
 type packageGroup struct {
@@ -502,6 +514,247 @@ func findDeclarationIdent(fset *token.FileSet, file *ast.File, symbol model.Symb
 		}
 	}
 	return nil
+}
+
+func planCrossPackageCallsiteEdits(
+	idx *model.Index,
+	targetsByFile map[string][]model.Symbol,
+	newName string,
+) ([]Edit, []Edit, map[string]string, map[string][]byte, error) {
+	modulePath := modulePathFromRoot(idx.Root)
+	skips := make([]Edit, 0, 8)
+
+	targetByImport := map[string]map[string]string{}
+	targetDirs := map[string]bool{}
+	for relPath, symbols := range targetsByFile {
+		pkgDir := packageFromFilePath(relPath)
+		targetDirs[pkgDir] = true
+		importPath := packageImportPath(modulePath, pkgDir)
+		for _, symbol := range symbols {
+			if symbol.Kind == "method_definition" {
+				skips = append(skips, Edit{
+					File:     symbol.File,
+					Kind:     symbol.Kind,
+					Category: "callsite_cross_package",
+					OldName:  symbol.Name,
+					NewName:  newName,
+					Line:     symbol.StartLine,
+					Column:   1,
+					Skipped:  true,
+					SkipNote: "cross-package method callsite updates are not supported",
+				})
+				continue
+			}
+			if importPath == "" {
+				skips = append(skips, Edit{
+					File:     symbol.File,
+					Kind:     symbol.Kind,
+					Category: "callsite_cross_package",
+					OldName:  symbol.Name,
+					NewName:  newName,
+					Line:     symbol.StartLine,
+					Column:   1,
+					Skipped:  true,
+					SkipNote: "module path not found; cross-package callsites unavailable",
+				})
+				continue
+			}
+
+			byName := targetByImport[importPath]
+			if byName == nil {
+				byName = map[string]string{}
+				targetByImport[importPath] = byName
+			}
+			byName[symbol.Name] = symbol.Kind
+		}
+	}
+	if len(targetByImport) == 0 {
+		return nil, skips, nil, nil, nil
+	}
+
+	filesByDir := map[string][]model.FileSummary{}
+	for _, file := range idx.Files {
+		dir := packageFromFilePath(file.Path)
+		filesByDir[dir] = append(filesByDir[dir], file)
+	}
+
+	edits := make([]Edit, 0, 16)
+	seen := map[string]bool{}
+	absByRel := map[string]string{}
+	sourceByRel := map[string][]byte{}
+
+	for dir, packageFiles := range filesByDir {
+		if targetDirs[dir] {
+			continue
+		}
+		if !directoryImportsTargets(packageFiles, targetByImport) {
+			continue
+		}
+
+		fset := token.NewFileSet()
+		astByRel := map[string]*ast.File{}
+		relByAbs := map[string]string{}
+		packageName := ""
+
+		for _, fileSummary := range packageFiles {
+			absPath := filepath.Join(idx.Root, filepath.FromSlash(fileSummary.Path))
+			source, err := os.ReadFile(absPath)
+			if err != nil {
+				return nil, skips, nil, nil, err
+			}
+			parsed, err := parser.ParseFile(fset, absPath, source, parser.ParseComments)
+			if err != nil {
+				return nil, skips, nil, nil, err
+			}
+
+			astByRel[fileSummary.Path] = parsed
+			absByRel[fileSummary.Path] = absPath
+			sourceByRel[fileSummary.Path] = source
+			relByAbs[filepath.Clean(absPath)] = fileSummary.Path
+			if packageName == "" {
+				packageName = parsed.Name.Name
+			}
+		}
+		if len(astByRel) == 0 {
+			continue
+		}
+
+		parsedFiles := make([]*ast.File, 0, len(astByRel))
+		for _, file := range astByRel {
+			parsedFiles = append(parsedFiles, file)
+		}
+		sort.Slice(parsedFiles, func(i, j int) bool {
+			left := fset.Position(parsedFiles[i].Pos()).Filename
+			right := fset.Position(parsedFiles[j].Pos()).Filename
+			return left < right
+		})
+
+		info := &types.Info{
+			Uses: map[*ast.Ident]types.Object{},
+		}
+		config := &types.Config{
+			Importer: importer.Default(),
+			Error:    func(error) {},
+		}
+		_, _ = config.Check(packageName, fset, parsedFiles, info)
+
+		for relPath, fileAST := range astByRel {
+			ast.Inspect(fileAST, func(node ast.Node) bool {
+				selector, ok := node.(*ast.SelectorExpr)
+				if !ok {
+					return true
+				}
+
+				xIdent, ok := selector.X.(*ast.Ident)
+				if !ok {
+					return true
+				}
+				obj, ok := info.Uses[xIdent].(*types.PkgName)
+				if !ok || obj.Imported() == nil {
+					return true
+				}
+
+				byName := targetByImport[obj.Imported().Path()]
+				if byName == nil {
+					return true
+				}
+				kind, ok := byName[selector.Sel.Name]
+				if !ok {
+					return true
+				}
+
+				pos := fset.Position(selector.Sel.Pos())
+				edit := Edit{
+					File:     relPath,
+					Kind:     kind,
+					Category: "callsite_cross_package",
+					OldName:  selector.Sel.Name,
+					NewName:  newName,
+					Line:     pos.Line,
+					Column:   pos.Column,
+					Offset:   pos.Offset,
+				}
+				if edit.OldName == newName {
+					return true
+				}
+				key := editKey(edit)
+				if seen[key] {
+					return true
+				}
+				seen[key] = true
+				edits = append(edits, edit)
+				return true
+			})
+		}
+	}
+
+	sort.Slice(edits, func(i, j int) bool {
+		if edits[i].File == edits[j].File {
+			if edits[i].Offset == edits[j].Offset {
+				return edits[i].Category < edits[j].Category
+			}
+			return edits[i].Offset < edits[j].Offset
+		}
+		return edits[i].File < edits[j].File
+	})
+	return edits, skips, absByRel, sourceByRel, nil
+}
+
+func directoryImportsTargets(files []model.FileSummary, targets map[string]map[string]string) bool {
+	for _, file := range files {
+		for _, imp := range file.Imports {
+			if targets[strings.TrimSpace(imp)] != nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func packageFromFilePath(filePath string) string {
+	cleaned := filepath.ToSlash(filepath.Clean(filePath))
+	dir := filepath.ToSlash(filepath.Dir(cleaned))
+	if dir == "." {
+		return "."
+	}
+	return dir
+}
+
+func packageImportPath(modulePath, pkgDir string) string {
+	if strings.TrimSpace(modulePath) == "" {
+		return ""
+	}
+	if pkgDir == "." || strings.TrimSpace(pkgDir) == "" {
+		return modulePath
+	}
+	return modulePath + "/" + pkgDir
+}
+
+func modulePathFromRoot(root string) string {
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	goModPath := filepath.Join(root, "go.mod")
+	file, err := os.Open(goModPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if !strings.HasPrefix(line, "module ") {
+			continue
+		}
+		module := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		module = strings.Trim(module, `"`)
+		return module
+	}
+	return ""
 }
 
 func editKey(edit Edit) string {

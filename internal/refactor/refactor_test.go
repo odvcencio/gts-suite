@@ -198,6 +198,69 @@ func Use() {
 	}
 }
 
+func TestRenameDeclarations_CrossPackageCallsites(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "lib"), 0o755); err != nil {
+		t.Fatalf("MkdirAll lib failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "app"), 0o755); err != nil {
+		t.Fatalf("MkdirAll app failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module sample\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile go.mod failed: %v", err)
+	}
+
+	libSource := `package lib
+
+func OldName() {}
+`
+	appSource := `package app
+
+import "sample/lib"
+
+func Use() {
+	lib.OldName()
+}
+`
+	libPath := filepath.Join(tmpDir, "lib", "lib.go")
+	appPath := filepath.Join(tmpDir, "app", "app.go")
+	if err := os.WriteFile(libPath, []byte(libSource), 0o644); err != nil {
+		t.Fatalf("WriteFile lib.go failed: %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte(appSource), 0o644); err != nil {
+		t.Fatalf("WriteFile app.go failed: %v", err)
+	}
+
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+	selector, err := query.ParseSelector("function_definition[name=/^OldName$/]")
+	if err != nil {
+		t.Fatalf("ParseSelector returned error: %v", err)
+	}
+
+	report, err := RenameDeclarations(idx, selector, "NewName", Options{
+		Write:                 true,
+		UpdateCallsites:       true,
+		CrossPackageCallsites: true,
+	})
+	if err != nil {
+		t.Fatalf("RenameDeclarations returned error: %v", err)
+	}
+	if report.PlannedUseEdits == 0 {
+		t.Fatalf("expected cross-package callsite edits, got %+v", report)
+	}
+
+	updatedApp, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatalf("ReadFile app.go failed: %v", err)
+	}
+	if !strings.Contains(string(updatedApp), "lib.NewName()") {
+		t.Fatalf("expected cross-package callsite rename, got:\n%s", string(updatedApp))
+	}
+}
+
 func TestRenameDeclarations_InvalidIdentifier(t *testing.T) {
 	_, err := RenameDeclarations(nil, query.Selector{}, "not-valid-name!", Options{})
 	if err == nil {

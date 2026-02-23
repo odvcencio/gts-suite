@@ -134,7 +134,7 @@ func newCLI() *cli {
 			ID:      "gtsbridge",
 			Aliases: []string{"bridge"},
 			Summary: "Map cross-component dependency bridges",
-			Usage:   "gtsbridge [path] [--cache .gts/index.json] [--top 20] [--json]",
+			Usage:   "gtsbridge [path] [--cache .gts/index.json] [--top 20] [--focus component] [--depth N] [--reverse] [--json]",
 			Run:     runBridge,
 		},
 		{
@@ -155,7 +155,7 @@ func newCLI() *cli {
 			ID:      "gtsrefactor",
 			Aliases: []string{"refactor"},
 			Summary: "Apply structural declaration renames (dry-run by default)",
-			Usage:   "gtsrefactor <selector> <new-name> [path] [--cache file] [--callsites] [--write] [--json]",
+			Usage:   "gtsrefactor <selector> <new-name> [path] [--cache file] [--callsites] [--cross-package] [--write] [--json]",
 			Run:     runRefactor,
 		},
 		{
@@ -281,10 +281,10 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtsfiles . --sort symbols --top 20")
 	fmt.Println("  gts gtsstats . --top 15")
 	fmt.Println("  gts gtsdeps . --by package --focus internal/query --depth 2 --reverse")
-	fmt.Println("  gts gtsbridge . --top 20")
+	fmt.Println("  gts gtsbridge . --focus internal/query --depth 2 --reverse")
 	fmt.Println("  gts gtsgrep 'function_definition[name=/^Test/]' .")
 	fmt.Println("  gts gtsdiff --before-cache before.json --after-cache after.json")
-	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --write")
+	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
 	fmt.Println("  gts gtsscope cmd/gts/main.go --line 300")
 	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600")
@@ -861,16 +861,25 @@ func runBridge(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-cache":  true,
-		"--cache": true,
-		"-top":    true,
-		"--top":   true,
-		"-json":   false,
-		"--json":  false,
+		"-cache":    true,
+		"--cache":   true,
+		"-top":      true,
+		"--top":     true,
+		"-focus":    true,
+		"--focus":   true,
+		"-depth":    true,
+		"--depth":   true,
+		"-reverse":  false,
+		"--reverse": false,
+		"-json":     false,
+		"--json":    false,
 	})
 
 	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
 	top := flags.Int("top", 20, "number of top bridge and external rows to show")
+	focus := flags.String("focus", "", "focus component for bridge traversal")
+	depth := flags.Int("depth", 1, "transitive traversal depth from focus")
+	reverse := flags.Bool("reverse", false, "walk reverse bridge direction from focus")
 	jsonOutput := flags.Bool("json", false, "emit JSON output")
 
 	if err := flags.Parse(args); err != nil {
@@ -881,6 +890,9 @@ func runBridge(args []string) error {
 	}
 	if *top <= 0 {
 		return fmt.Errorf("top must be > 0")
+	}
+	if *depth <= 0 {
+		return fmt.Errorf("depth must be > 0")
 	}
 
 	target := "."
@@ -894,7 +906,10 @@ func runBridge(args []string) error {
 	}
 
 	report, err := bridge.Build(idx, bridge.Options{
-		Top: *top,
+		Top:     *top,
+		Focus:   *focus,
+		Depth:   *depth,
+		Reverse: *reverse,
 	})
 	if err != nil {
 		return err
@@ -933,6 +948,18 @@ func runBridge(args []string) error {
 				line += " samples=" + strings.Join(edge.Samples, ",")
 			}
 			fmt.Println(line)
+		}
+	}
+	if report.Focus != "" {
+		fmt.Printf("focus: %s direction=%s depth=%d\n", report.Focus, report.FocusDirection, report.FocusDepth)
+		if len(report.FocusOutgoing) > 0 {
+			fmt.Printf("  outgoing: %s\n", strings.Join(report.FocusOutgoing, ", "))
+		}
+		if len(report.FocusIncoming) > 0 {
+			fmt.Printf("  incoming: %s\n", strings.Join(report.FocusIncoming, ", "))
+		}
+		if len(report.FocusWalk) > 0 {
+			fmt.Printf("  walk: %s\n", strings.Join(report.FocusWalk, ", "))
 		}
 	}
 	if len(report.ExternalByComponent) > 0 {
@@ -1119,18 +1146,21 @@ func runRefactor(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-cache":      true,
-		"--cache":     true,
-		"-callsites":  false,
-		"--callsites": false,
-		"-write":      false,
-		"--write":     false,
-		"-json":       false,
-		"--json":      false,
+		"-cache":          true,
+		"--cache":         true,
+		"-callsites":      false,
+		"--callsites":     false,
+		"-cross-package":  false,
+		"--cross-package": false,
+		"-write":          false,
+		"--write":         false,
+		"-json":           false,
+		"--json":          false,
 	})
 
 	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
 	updateCallsites := flags.Bool("callsites", false, "update resolved same-package callsites")
+	crossPackage := flags.Bool("cross-package", false, "update resolved cross-package callsites within the module")
 	writeChanges := flags.Bool("write", false, "apply edits in-place (default is dry-run)")
 	jsonOutput := flags.Bool("json", false, "emit JSON output")
 
@@ -1139,6 +1169,9 @@ func runRefactor(args []string) error {
 	}
 	if flags.NArg() < 2 || flags.NArg() > 3 {
 		return errors.New("usage: gtsrefactor <selector> <new-name> [path]")
+	}
+	if *crossPackage && !*updateCallsites {
+		return errors.New("--cross-package requires --callsites")
 	}
 
 	selector, err := query.ParseSelector(flags.Arg(0))
@@ -1158,8 +1191,9 @@ func runRefactor(args []string) error {
 	}
 
 	report, err := refactor.RenameDeclarations(idx, selector, newName, refactor.Options{
-		Write:           *writeChanges,
-		UpdateCallsites: *updateCallsites,
+		Write:                 *writeChanges,
+		UpdateCallsites:       *updateCallsites,
+		CrossPackageCallsites: *crossPackage,
 	})
 	if err != nil {
 		return err
@@ -1191,10 +1225,11 @@ func runRefactor(args []string) error {
 		fmt.Printf("%s:%d:%d %s %s %s -> %s %s\n", edit.File, edit.Line, edit.Column, edit.Category, edit.Kind, edit.OldName, edit.NewName, status)
 	}
 	fmt.Printf(
-		"refactor: selector=%q new=%q callsites=%t matches=%d planned=%d (decl=%d callsites=%d) applied=%d files=%d\n",
+		"refactor: selector=%q new=%q callsites=%t cross-package=%t matches=%d planned=%d (decl=%d callsites=%d) applied=%d files=%d\n",
 		report.Selector,
 		report.NewName,
 		report.UpdateCallsites,
+		report.CrossPackageCallsites,
 		report.MatchCount,
 		report.PlannedEdits,
 		report.PlannedDeclEdits,

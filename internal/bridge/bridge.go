@@ -12,7 +12,10 @@ import (
 )
 
 type Options struct {
-	Top int
+	Top     int
+	Focus   string
+	Depth   int
+	Reverse bool
 }
 
 type ComponentMetric struct {
@@ -44,6 +47,12 @@ type Report struct {
 	BridgeCount         int               `json:"bridge_count"`
 	Components          []ComponentMetric `json:"components,omitempty"`
 	TopBridges          []BridgeEdge      `json:"top_bridges,omitempty"`
+	Focus               string            `json:"focus,omitempty"`
+	FocusDirection      string            `json:"focus_direction,omitempty"`
+	FocusDepth          int               `json:"focus_depth,omitempty"`
+	FocusOutgoing       []string          `json:"focus_outgoing,omitempty"`
+	FocusIncoming       []string          `json:"focus_incoming,omitempty"`
+	FocusWalk           []string          `json:"focus_walk,omitempty"`
 	ExternalByComponent []ExternalMetric  `json:"external_by_component,omitempty"`
 }
 
@@ -53,6 +62,9 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	}
 	if opts.Top <= 0 {
 		opts.Top = 20
+	}
+	if opts.Depth <= 0 {
+		opts.Depth = 1
 	}
 
 	modulePath := modulePathFromRoot(idx.Root)
@@ -208,7 +220,7 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		externalByComponent = externalByComponent[:opts.Top]
 	}
 
-	return Report{
+	report := Report{
 		Root:                idx.Root,
 		Module:              modulePath,
 		PackageCount:        len(packageSet),
@@ -217,7 +229,37 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		Components:          components,
 		TopBridges:          bridges,
 		ExternalByComponent: externalByComponent,
-	}, nil
+	}
+
+	if focusRaw := strings.TrimSpace(opts.Focus); focusRaw != "" {
+		focus := componentForPackage(focusRaw)
+		report.Focus = focus
+		if opts.Reverse {
+			report.FocusDirection = "reverse"
+		} else {
+			report.FocusDirection = "forward"
+		}
+		report.FocusDepth = opts.Depth
+
+		outgoingSet := map[string]bool{}
+		incomingSet := map[string]bool{}
+		edgeList := make([]BridgeEdge, 0, len(bridgeBuckets))
+		for key, bucket := range bridgeBuckets {
+			from, to, _ := strings.Cut(key, "->")
+			edgeList = append(edgeList, BridgeEdge{From: from, To: to, Count: bucket.count})
+			if from == focus {
+				outgoingSet[to] = true
+			}
+			if to == focus {
+				incomingSet[from] = true
+			}
+		}
+		report.FocusOutgoing = sortedSet(outgoingSet)
+		report.FocusIncoming = sortedSet(incomingSet)
+		report.FocusWalk = walkComponents(edgeList, focus, opts.Depth, opts.Reverse)
+	}
+
+	return report, nil
 }
 
 func packageFromFile(filePath string) string {
@@ -268,6 +310,76 @@ func internalImportPackage(importPath, modulePath string) (string, bool) {
 		return ".", true
 	}
 	return trimmed, true
+}
+
+func walkComponents(edges []BridgeEdge, focus string, depth int, reverse bool) []string {
+	if strings.TrimSpace(focus) == "" || depth <= 0 {
+		return nil
+	}
+
+	adjacency := map[string][]string{}
+	for _, edge := range edges {
+		from := edge.From
+		to := edge.To
+		if reverse {
+			from, to = to, from
+		}
+		adjacency[from] = append(adjacency[from], to)
+	}
+	for key := range adjacency {
+		sort.Strings(adjacency[key])
+		adjacency[key] = dedupeSorted(adjacency[key])
+	}
+
+	type nodeDepth struct {
+		node  string
+		depth int
+	}
+	queue := []nodeDepth{{node: focus, depth: 0}}
+	visited := map[string]bool{focus: true}
+	out := make([]string, 0, 16)
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= depth {
+			continue
+		}
+
+		for _, next := range adjacency[current.node] {
+			if visited[next] {
+				continue
+			}
+			visited[next] = true
+			out = append(out, next)
+			queue = append(queue, nodeDepth{node: next, depth: current.depth + 1})
+		}
+	}
+	return out
+}
+
+func sortedSet(values map[string]bool) []string {
+	out := make([]string, 0, len(values))
+	for value := range values {
+		out = append(out, value)
+	}
+	sort.Strings(out)
+	return out
+}
+
+func dedupeSorted(items []string) []string {
+	if len(items) == 0 {
+		return nil
+	}
+	out := make([]string, 0, len(items))
+	last := ""
+	for i, item := range items {
+		if i == 0 || item != last {
+			out = append(out, item)
+			last = item
+		}
+	}
+	return out
 }
 
 func modulePathFromRoot(root string) string {

@@ -504,6 +504,9 @@ const Value = 1
 	runErr := runBridge([]string{
 		tmpDir,
 		"--top", "5",
+		"--focus", "internal/x",
+		"--depth", "2",
+		"--reverse",
 	})
 	_ = writePipe.Close()
 	if runErr != nil {
@@ -515,7 +518,7 @@ const Value = 1
 		t.Fatalf("ReadFrom failed: %v", err)
 	}
 	text := output.String()
-	for _, expected := range []string{"bridge:", "components:", "top bridges", "external pressure"} {
+	for _, expected := range []string{"bridge:", "components:", "top bridges", "focus: internal/x direction=reverse depth=2", "external pressure"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected output to contain %q, got:\n%s", expected, text)
 		}
@@ -739,6 +742,59 @@ func Use() {
 	}
 	if !strings.Contains(string(afterUse), "NewName()") {
 		t.Fatalf("expected callsite to be renamed, got:\n%s", string(afterUse))
+	}
+}
+
+func TestRunRefactorCrossPackageCallsites(t *testing.T) {
+	tmpDir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(tmpDir, "lib"), 0o755); err != nil {
+		t.Fatalf("MkdirAll lib failed: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Join(tmpDir, "app"), 0o755); err != nil {
+		t.Fatalf("MkdirAll app failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpDir, "go.mod"), []byte("module sample\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile go.mod failed: %v", err)
+	}
+
+	libSource := `package lib
+
+func OldName() {}
+`
+	appSource := `package app
+
+import "sample/lib"
+
+func Use() {
+	lib.OldName()
+}
+`
+	libPath := filepath.Join(tmpDir, "lib", "lib.go")
+	appPath := filepath.Join(tmpDir, "app", "app.go")
+	if err := os.WriteFile(libPath, []byte(libSource), 0o644); err != nil {
+		t.Fatalf("WriteFile lib.go failed: %v", err)
+	}
+	if err := os.WriteFile(appPath, []byte(appSource), 0o644); err != nil {
+		t.Fatalf("WriteFile app.go failed: %v", err)
+	}
+
+	if err := runRefactor([]string{
+		"function_definition[name=/^OldName$/]",
+		"NewName",
+		tmpDir,
+		"--callsites",
+		"--cross-package",
+		"--write",
+	}); err != nil {
+		t.Fatalf("runRefactor cross-package write returned error: %v", err)
+	}
+
+	afterApp, err := os.ReadFile(appPath)
+	if err != nil {
+		t.Fatalf("ReadFile app.go failed: %v", err)
+	}
+	if !strings.Contains(string(afterApp), "lib.NewName()") {
+		t.Fatalf("expected cross-package callsite rename, got:\n%s", string(afterApp))
 	}
 }
 

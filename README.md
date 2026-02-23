@@ -31,11 +31,11 @@ go run ./cmd/gts gtsmap --cache .gts/index.json --json
 go run ./cmd/gts gtsfiles . --sort symbols --top 20
 go run ./cmd/gts gtsstats . --top 15
 go run ./cmd/gts gtsdeps . --by package --focus internal/query --depth 2 --reverse
-go run ./cmd/gts gtsbridge . --top 20
+go run ./cmd/gts gtsbridge . --focus internal/query --depth 2 --reverse
 go run ./cmd/gts gtsgrep 'function_definition[name=/^Test/,start>=10]' --cache .gts/index.json
 go run ./cmd/gts gtsgrep 'method_definition[receiver=/Service/,signature=/Serve/]' --cache .gts/index.json --count
 go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --json
-go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --write
+go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
 go run ./cmd/gts gtschunk . --tokens 500 --json
 go run ./cmd/gts gtsscope cmd/gts/main.go --line 300 --cache .gts/index.json --json
 go run ./cmd/gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --json
@@ -85,9 +85,9 @@ Supported kinds in this version:
 - File discovery (`gtsfiles`) supports language/symbol filters and density-based sorting.
 - Stats (`gtsstats`) summarizes symbol kinds, language breakdown, and top files by symbol density.
 - Dependencies (`gtsdeps`) summarizes import graph shape with top incoming/outgoing nodes and focus traversal (`--depth`, `--reverse`).
-- Bridges (`gtsbridge`) summarizes cross-component internal edges and external dependency pressure.
+- Bridges (`gtsbridge`) summarizes cross-component internal edges, external dependency pressure, and focus traversal.
 - Structural diff detects symbol additions/removals/modifications and import changes.
-- Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package callsite updates.
+- Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
 - Scope resolution (`gtsscope`) reports in-scope imports, package symbols, and local declarations for Go files.
 - Context packing returns focus symbol, imports, bounded source snippet, and related symbols.
@@ -99,5 +99,5 @@ Supported kinds in this version:
 
 - Add parser-backed adapters for gotreesitter language modules.
 - Expand selector grammar (field filters, boolean filters).
-- Extend `gtsrefactor` beyond same-package callsites.
+- Extend `gtsrefactor` to cross-package method and interface usage resolution.
 - Expand `gtsscope` beyond Go with parser-backed symbol tables.

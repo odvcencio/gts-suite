@@ -33,7 +33,12 @@ func TestBuildBridgeReport(t *testing.T) {
 		},
 	}
 
-	report, err := Build(idx, Options{Top: 10})
+	report, err := Build(idx, Options{
+		Top:     10,
+		Focus:   "cmd/api",
+		Depth:   2,
+		Reverse: true,
+	})
 	if err != nil {
 		t.Fatalf("Build returned error: %v", err)
 	}
@@ -52,6 +57,9 @@ func TestBuildBridgeReport(t *testing.T) {
 	}
 	if len(report.ExternalByComponent) == 0 {
 		t.Fatal("expected external metrics")
+	}
+	if report.Focus != "cmd/api" || report.FocusDirection != "reverse" || report.FocusDepth != 2 {
+		t.Fatalf("unexpected focus metadata: focus=%q direction=%q depth=%d", report.Focus, report.FocusDirection, report.FocusDepth)
 	}
 }
 
