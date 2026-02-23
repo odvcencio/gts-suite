@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestBuild_FocusAndSnippet(t *testing.T) {

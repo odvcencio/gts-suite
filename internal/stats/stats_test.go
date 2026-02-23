@@ -3,7 +3,7 @@ package stats
 import (
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestBuildAggregatesCounts(t *testing.T) {

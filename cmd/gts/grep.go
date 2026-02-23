@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/query"
+	"gts-suite/pkg/query"
 )
 
 func newGrepCmd() *cobra.Command {

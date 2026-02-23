@@ -3,7 +3,7 @@ package files
 import (
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestBuildFiltersAndSorts(t *testing.T) {

@@ -9,9 +9,9 @@ import (
 
 	"github.com/odvcencio/gotreesitter"
 
-	"gts-suite/internal/lang"
-	"gts-suite/internal/lang/treesitter"
-	"gts-suite/internal/model"
+	"gts-suite/pkg/lang"
+	"gts-suite/pkg/lang/treesitter"
+	"gts-suite/pkg/model"
 )
 
 type WatchUpdateOptions struct {

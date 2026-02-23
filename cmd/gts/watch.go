@@ -11,10 +11,10 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
-	"gts-suite/internal/ignore"
-	"gts-suite/internal/index"
-	"gts-suite/internal/model"
-	"gts-suite/internal/structdiff"
+	"gts-suite/pkg/ignore"
+	"gts-suite/pkg/index"
+	"gts-suite/pkg/model"
+	"gts-suite/pkg/structdiff"
 )
 
 func watchWithFSNotify(ctx context.Context, target string, debounce time.Duration, ignorePaths map[string]bool, ignoreMatcher *ignore.Matcher, onChange func(changedPaths []string)) error {

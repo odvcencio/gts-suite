@@ -12,7 +12,7 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 type Parser struct {

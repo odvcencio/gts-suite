@@ -4,9 +4,9 @@ import (
 	"fmt"
 	"strings"
 
-	"gts-suite/internal/index"
-	"gts-suite/internal/model"
-	"gts-suite/internal/xref"
+	"gts-suite/pkg/index"
+	"gts-suite/pkg/model"
+	"gts-suite/pkg/xref"
 )
 
 func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, error) {

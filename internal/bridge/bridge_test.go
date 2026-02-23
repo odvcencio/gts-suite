@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestBuildBridgeReport(t *testing.T) {

@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/xref"
+	"gts-suite/pkg/xref"
 )
 
 func newCallgraphCmd() *cobra.Command {

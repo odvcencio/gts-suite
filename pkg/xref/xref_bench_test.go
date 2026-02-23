@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func BenchmarkBuild(b *testing.B) {

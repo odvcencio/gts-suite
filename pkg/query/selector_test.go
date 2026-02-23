@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestParseSelector_WithNameFilter(t *testing.T) {

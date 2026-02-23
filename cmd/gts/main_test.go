@@ -8,7 +8,7 @@ import (
 	"testing"
 	"time"
 
-	"gts-suite/internal/structdiff"
+	"gts-suite/pkg/structdiff"
 )
 
 func TestNewRootCmd_HasCoreCommandsAndAliases(t *testing.T) {

@@ -13,10 +13,10 @@ import (
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
 	"gts-suite/internal/files"
-	"gts-suite/internal/refactor"
+	"gts-suite/pkg/refactor"
 	"gts-suite/internal/stats"
-	"gts-suite/internal/structdiff"
-	"gts-suite/internal/xref"
+	"gts-suite/pkg/structdiff"
+	"gts-suite/pkg/xref"
 )
 
 func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {

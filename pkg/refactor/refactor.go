@@ -14,8 +14,8 @@ import (
 	"sort"
 	"strings"
 
-	"gts-suite/internal/model"
-	"gts-suite/internal/query"
+	"gts-suite/pkg/model"
+	"gts-suite/pkg/query"
 )
 
 type Options struct {

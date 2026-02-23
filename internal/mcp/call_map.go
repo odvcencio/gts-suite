@@ -3,7 +3,7 @@ package mcp
 import (
 	"sort"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func (s *Service) callMap(args map[string]any) (any, error) {

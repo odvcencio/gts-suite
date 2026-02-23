@@ -3,7 +3,7 @@ package query
 import (
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func BenchmarkParseSelector_Simple(b *testing.B) {

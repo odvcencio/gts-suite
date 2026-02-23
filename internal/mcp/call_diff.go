@@ -3,7 +3,7 @@ package mcp
 import (
 	"fmt"
 
-	"gts-suite/internal/structdiff"
+	"gts-suite/pkg/structdiff"
 )
 
 func (s *Service) callDiff(args map[string]any) (any, error) {

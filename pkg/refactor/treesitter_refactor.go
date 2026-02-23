@@ -11,8 +11,8 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"gts-suite/internal/model"
-	"gts-suite/internal/query"
+	"gts-suite/pkg/model"
+	"gts-suite/pkg/query"
 )
 
 func renameDeclarationsTreeSitter(idx *model.Index, selector query.Selector, newName string, opts Options) (Report, error) {

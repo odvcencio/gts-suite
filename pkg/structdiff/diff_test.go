@@ -3,7 +3,7 @@ package structdiff
 import (
 	"testing"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 func TestCompare_SymbolAndImportChanges(t *testing.T) {

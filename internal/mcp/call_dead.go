@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"gts-suite/internal/xref"
+	"gts-suite/pkg/xref"
 )
 
 func (s *Service) callDead(args map[string]any) (any, error) {

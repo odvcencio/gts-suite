@@ -6,8 +6,8 @@ import (
 	"strings"
 	"testing"
 
-	"gts-suite/internal/index"
-	"gts-suite/internal/query"
+	"gts-suite/pkg/index"
+	"gts-suite/pkg/query"
 )
 
 func TestRenameDeclarations_DryRun(t *testing.T) {

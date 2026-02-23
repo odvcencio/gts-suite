@@ -6,8 +6,8 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/query"
-	"gts-suite/internal/refactor"
+	"gts-suite/pkg/query"
+	"gts-suite/pkg/refactor"
 )
 
 func newRefactorCmd() *cobra.Command {

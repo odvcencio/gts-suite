@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"gts-suite/internal/model"
+	"gts-suite/pkg/model"
 )
 
 type SymbolRef struct {
