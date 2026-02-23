@@ -12,10 +12,11 @@ import (
 )
 
 type Options struct {
-	FilePath    string
-	Line        int
-	TokenBudget int
-	Semantic    bool
+	FilePath      string
+	Line          int
+	TokenBudget   int
+	Semantic      bool
+	SemanticDepth int
 }
 
 type Report struct {
@@ -23,6 +24,7 @@ type Report struct {
 	Line            int            `json:"line"`
 	TokenBudget     int            `json:"token_budget"`
 	Semantic        bool           `json:"semantic"`
+	SemanticDepth   int            `json:"semantic_depth,omitempty"`
 	EstimatedTokens int            `json:"estimated_tokens"`
 	Focus           *model.Symbol  `json:"focus,omitempty"`
 	Imports         []string       `json:"imports,omitempty"`
@@ -46,6 +48,9 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	if opts.TokenBudget <= 0 {
 		opts.TokenBudget = 800
 	}
+	if opts.SemanticDepth <= 0 {
+		opts.SemanticDepth = 1
+	}
 
 	relPath, absPath, err := resolvePaths(idx.Root, opts.FilePath)
 	if err != nil {
@@ -67,11 +72,12 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	}
 
 	report := Report{
-		File:        fileSummary.Path,
-		Line:        opts.Line,
-		TokenBudget: opts.TokenBudget,
-		Semantic:    opts.Semantic,
-		Imports:     append([]string(nil), fileSummary.Imports...),
+		File:          fileSummary.Path,
+		Line:          opts.Line,
+		TokenBudget:   opts.TokenBudget,
+		Semantic:      opts.Semantic,
+		SemanticDepth: opts.SemanticDepth,
+		Imports:       append([]string(nil), fileSummary.Imports...),
 	}
 
 	focus := findFocusSymbol(fileSummary.Symbols, opts.Line)
@@ -98,7 +104,7 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 
 	remaining := opts.TokenBudget - (baseTokens + snippetTokens)
 	if opts.Semantic {
-		report.Related = pickSemanticRelatedSymbols(idx, fileSummary, report.Focus, remaining)
+		report.Related = pickSemanticRelatedSymbols(idx, fileSummary, report.Focus, remaining, opts.SemanticDepth)
 	}
 	if len(report.Related) == 0 {
 		report.Related = pickRelatedSymbols(fileSummary.Symbols, report.Focus, remaining)
@@ -259,9 +265,12 @@ func pickRelatedSymbols(symbols []model.Symbol, focus *model.Symbol, budget int)
 	return trimmed
 }
 
-func pickSemanticRelatedSymbols(idx *model.Index, fileSummary model.FileSummary, focus *model.Symbol, budget int) []model.Symbol {
+func pickSemanticRelatedSymbols(idx *model.Index, fileSummary model.FileSummary, focus *model.Symbol, budget int, depth int) []model.Symbol {
 	if idx == nil || focus == nil || budget <= 0 {
 		return nil
+	}
+	if depth <= 0 {
+		depth = 1
 	}
 
 	graph, err := xref.Build(idx)
@@ -287,49 +296,88 @@ func pickSemanticRelatedSymbols(idx *model.Index, fileSummary model.FileSummary,
 		return nil
 	}
 
-	outgoing := graph.OutgoingEdges(focusID)
-	if len(outgoing) == 0 {
+	type scoredSymbol struct {
+		symbol model.Symbol
+		id     string
+		score  int
+		depth  int
+	}
+
+	type queueNode struct {
+		id    string
+		depth int
+	}
+
+	visitedDepth := map[string]int{focusID: 0}
+	queue := []queueNode{{id: focusID, depth: 0}}
+	scoredByID := map[string]scoredSymbol{}
+
+	for len(queue) > 0 {
+		current := queue[0]
+		queue = queue[1:]
+		if current.depth >= depth {
+			continue
+		}
+
+		for _, edge := range graph.OutgoingEdges(current.id) {
+			callee := edge.Callee
+			nextDepth := current.depth + 1
+
+			item := scoredByID[callee.ID]
+			if item.id == "" {
+				item = scoredSymbol{
+					id: callee.ID,
+					symbol: model.Symbol{
+						File:      callee.File,
+						Kind:      callee.Kind,
+						Name:      callee.Name,
+						Signature: callee.Signature,
+						Receiver:  callee.Receiver,
+						StartLine: callee.StartLine,
+						EndLine:   callee.EndLine,
+					},
+					score: 0,
+					depth: nextDepth,
+				}
+			}
+			weight := edge.Count + (depth - current.depth)
+			item.score += weight
+			if nextDepth < item.depth {
+				item.depth = nextDepth
+			}
+			scoredByID[callee.ID] = item
+
+			seenDepth, seen := visitedDepth[callee.ID]
+			if !seen || nextDepth < seenDepth {
+				visitedDepth[callee.ID] = nextDepth
+				queue = append(queue, queueNode{id: callee.ID, depth: nextDepth})
+			}
+		}
+	}
+
+	if len(scoredByID) == 0 {
 		return nil
 	}
 
-	type scoredSymbol struct {
-		symbol model.Symbol
-		score  int
-	}
-
-	scored := make([]scoredSymbol, 0, len(outgoing))
-	seen := map[string]bool{}
-	for _, edge := range outgoing {
-		callee := edge.Callee
-		if seen[callee.ID] {
-			continue
-		}
-		seen[callee.ID] = true
-		scored = append(scored, scoredSymbol{
-			symbol: model.Symbol{
-				File:      callee.File,
-				Kind:      callee.Kind,
-				Name:      callee.Name,
-				Signature: callee.Signature,
-				Receiver:  callee.Receiver,
-				StartLine: callee.StartLine,
-				EndLine:   callee.EndLine,
-			},
-			score: edge.Count,
-		})
+	scored := make([]scoredSymbol, 0, len(scoredByID))
+	for _, item := range scoredByID {
+		scored = append(scored, item)
 	}
 
 	sort.Slice(scored, func(i, j int) bool {
-		if scored[i].score == scored[j].score {
-			if scored[i].symbol.File == scored[j].symbol.File {
-				if scored[i].symbol.StartLine == scored[j].symbol.StartLine {
-					return scored[i].symbol.Name < scored[j].symbol.Name
+		if scored[i].depth == scored[j].depth {
+			if scored[i].score == scored[j].score {
+				if scored[i].symbol.File == scored[j].symbol.File {
+					if scored[i].symbol.StartLine == scored[j].symbol.StartLine {
+						return scored[i].symbol.Name < scored[j].symbol.Name
+					}
+					return scored[i].symbol.StartLine < scored[j].symbol.StartLine
 				}
-				return scored[i].symbol.StartLine < scored[j].symbol.StartLine
+				return scored[i].symbol.File < scored[j].symbol.File
 			}
-			return scored[i].symbol.File < scored[j].symbol.File
+			return scored[i].score > scored[j].score
 		}
-		return scored[i].score > scored[j].score
+		return scored[i].depth < scored[j].depth
 	})
 
 	trimmed := make([]model.Symbol, 0, len(scored))

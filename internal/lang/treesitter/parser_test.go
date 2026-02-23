@@ -3,6 +3,7 @@ package treesitter
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -11,12 +12,9 @@ import (
 )
 
 func TestParseGoSymbolsAndImports(t *testing.T) {
-	entry := grammars.DetectLanguage("main.go")
-	if entry == nil {
-		t.Fatal("expected go language entry")
-	}
+	entry := findEntryByExtension(t, ".go")
 
-	parser, err := NewParser(*entry)
+	parser, err := NewParser(entry)
 	if err != nil {
 		t.Fatalf("NewParser returned error: %v", err)
 	}
@@ -69,12 +67,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {}
 }
 
 func TestParsePythonSymbols(t *testing.T) {
-	entry := grammars.DetectLanguage("main.py")
-	if entry == nil {
-		t.Fatal("expected python language entry")
-	}
+	entry := findEntryByExtension(t, ".py")
 
-	parser, err := NewParser(*entry)
+	parser, err := NewParser(entry)
 	if err != nil {
 		t.Fatalf("NewParser returned error: %v", err)
 	}
@@ -106,12 +101,9 @@ def helper():
 }
 
 func TestParseIncrementalWithTree(t *testing.T) {
-	entry := grammars.DetectLanguage("main.go")
-	if entry == nil {
-		t.Fatal("expected go language entry")
-	}
+	entry := findEntryByExtension(t, ".go")
 
-	parser, err := NewParser(*entry)
+	parser, err := NewParser(entry)
 	if err != nil {
 		t.Fatalf("NewParser returned error: %v", err)
 	}
@@ -195,11 +187,8 @@ func TestParseIncrementalWithTree_FileIntegration(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "main.go")
 
-	entry := grammars.DetectLanguage(sourcePath)
-	if entry == nil {
-		t.Fatal("expected go language entry")
-	}
-	parser, err := NewParser(*entry)
+	entry := findEntryByExtension(t, ".go")
+	parser, err := NewParser(entry)
 	if err != nil {
 		t.Fatalf("NewParser returned error: %v", err)
 	}
@@ -235,6 +224,22 @@ func TestParseIncrementalWithTree_FileIntegration(t *testing.T) {
 	if newTree != tree {
 		newTree.Release()
 	}
+}
+
+func findEntryByExtension(t *testing.T, extension string) grammars.LangEntry {
+	t.Helper()
+	for _, entry := range grammars.AllLanguages() {
+		if strings.TrimSpace(entry.TagsQuery) == "" {
+			continue
+		}
+		for _, ext := range entry.Extensions {
+			if ext == extension {
+				return entry
+			}
+		}
+	}
+	t.Fatalf("no language entry with tags query for extension %q", extension)
+	return grammars.LangEntry{}
 }
 
 func hasSymbol(summary model.FileSummary, kind, name string) bool {

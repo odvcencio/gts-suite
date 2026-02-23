@@ -248,7 +248,7 @@ func newCLI() *cli {
 			ID:      "gtscontext",
 			Aliases: []string{"context"},
 			Summary: "Pack focused code context for a file and line",
-			Usage:   "gtscontext <file> [--line N] [--tokens N] [--semantic] [--root .] [--cache file] [--json]",
+			Usage:   "gtscontext <file> [--line N] [--tokens N] [--semantic] [--semantic-depth N] [--root .] [--cache file] [--json]",
 			Run:     runContext,
 		},
 		{
@@ -363,7 +363,7 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --engine go --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
 	fmt.Println("  gts gtsscope cmd/gts/main.go --line 300")
-	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic")
+	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic --semantic-depth 2")
 	fmt.Println("  gts gtslint . --rule 'no function longer than 50 lines'")
 	fmt.Println("  gts gtslint . --pattern ./rules/no-empty-func.scm")
 	fmt.Println("  gts help gtsgrep")
@@ -2079,18 +2079,20 @@ func runContext(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-cache":     true,
-		"--cache":    true,
-		"-root":      true,
-		"--root":     true,
-		"-line":      true,
-		"--line":     true,
-		"-tokens":    true,
-		"--tokens":   true,
-		"-semantic":  false,
-		"--semantic": false,
-		"-json":      false,
-		"--json":     false,
+		"-cache":           true,
+		"--cache":          true,
+		"-root":            true,
+		"--root":           true,
+		"-line":            true,
+		"--line":           true,
+		"-tokens":          true,
+		"--tokens":         true,
+		"-semantic":        false,
+		"--semantic":       false,
+		"-semantic-depth":  true,
+		"--semantic-depth": true,
+		"-json":            false,
+		"--json":           false,
 	})
 
 	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
@@ -2098,6 +2100,7 @@ func runContext(args []string) error {
 	line := flags.Int("line", 1, "cursor line (1-based)")
 	tokens := flags.Int("tokens", 800, "token budget")
 	semantic := flags.Bool("semantic", false, "pack semantic dependency context when possible")
+	semanticDepth := flags.Int("semantic-depth", 1, "dependency traversal depth in semantic mode")
 	jsonOutput := flags.Bool("json", false, "emit JSON output")
 
 	if err := flags.Parse(args); err != nil {
@@ -2114,10 +2117,11 @@ func runContext(args []string) error {
 	}
 
 	report, err := contextpack.Build(idx, contextpack.Options{
-		FilePath:    filePath,
-		Line:        *line,
-		TokenBudget: *tokens,
-		Semantic:    *semantic,
+		FilePath:      filePath,
+		Line:          *line,
+		TokenBudget:   *tokens,
+		Semantic:      *semantic,
+		SemanticDepth: *semanticDepth,
 	})
 	if err != nil {
 		return err
@@ -2131,6 +2135,9 @@ func runContext(args []string) error {
 	fmt.Printf("line: %d\n", report.Line)
 	fmt.Printf("budget: %d (estimated: %d)\n", report.TokenBudget, report.EstimatedTokens)
 	fmt.Printf("semantic: %t\n", report.Semantic)
+	if report.Semantic {
+		fmt.Printf("semantic-depth: %d\n", report.SemanticDepth)
+	}
 	if report.Focus != nil {
 		fmt.Printf("focus: %s %s [%d:%d]\n", report.Focus.Kind, symbolLabel(report.Focus.Name, report.Focus.Signature), report.Focus.StartLine, report.Focus.EndLine)
 	}

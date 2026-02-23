@@ -160,3 +160,113 @@ func work() {
 		t.Fatalf("expected related symbol helper, got %+v", report.Related[0])
 	}
 }
+
+func TestBuild_SemanticDepthIncludesTransitiveCalls(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "sample.go")
+	source := `package sample
+
+func leaf() {}
+
+func mid() {
+	leaf()
+}
+
+func work() {
+	mid()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	idx := &model.Index{
+		Root: tmpDir,
+		Files: []model.FileSummary{
+			{
+				Path: "sample.go",
+				Symbols: []model.Symbol{
+					{
+						File:      "sample.go",
+						Kind:      "function_definition",
+						Name:      "leaf",
+						Signature: "func leaf()",
+						StartLine: 3,
+						EndLine:   3,
+					},
+					{
+						File:      "sample.go",
+						Kind:      "function_definition",
+						Name:      "mid",
+						Signature: "func mid()",
+						StartLine: 5,
+						EndLine:   7,
+					},
+					{
+						File:      "sample.go",
+						Kind:      "function_definition",
+						Name:      "work",
+						Signature: "func work()",
+						StartLine: 9,
+						EndLine:   11,
+					},
+				},
+				References: []model.Reference{
+					{
+						File:        "sample.go",
+						Kind:        "reference.call",
+						Name:        "leaf",
+						StartLine:   6,
+						EndLine:     6,
+						StartColumn: 2,
+						EndColumn:   6,
+					},
+					{
+						File:        "sample.go",
+						Kind:        "reference.call",
+						Name:        "mid",
+						StartLine:   10,
+						EndLine:     10,
+						StartColumn: 2,
+						EndColumn:   5,
+					},
+				},
+			},
+		},
+	}
+
+	depthOne, err := Build(idx, Options{
+		FilePath:      sourcePath,
+		Line:          10,
+		TokenBudget:   400,
+		Semantic:      true,
+		SemanticDepth: 1,
+	})
+	if err != nil {
+		t.Fatalf("Build depth=1 returned error: %v", err)
+	}
+	if len(depthOne.Related) != 1 || depthOne.Related[0].Name != "mid" {
+		t.Fatalf("expected depth=1 related=[mid], got %+v", depthOne.Related)
+	}
+
+	depthTwo, err := Build(idx, Options{
+		FilePath:      sourcePath,
+		Line:          10,
+		TokenBudget:   400,
+		Semantic:      true,
+		SemanticDepth: 2,
+	})
+	if err != nil {
+		t.Fatalf("Build depth=2 returned error: %v", err)
+	}
+	if len(depthTwo.Related) < 2 {
+		t.Fatalf("expected depth=2 to include transitive callee, got %+v", depthTwo.Related)
+	}
+	relatedNames := map[string]bool{}
+	for _, symbol := range depthTwo.Related {
+		relatedNames[symbol.Name] = true
+	}
+	if !relatedNames["mid"] || !relatedNames["leaf"] {
+		t.Fatalf("expected depth=2 related to include mid and leaf, got %+v", depthTwo.Related)
+	}
+}

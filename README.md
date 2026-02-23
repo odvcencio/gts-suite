@@ -46,7 +46,7 @@ go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --j
 go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
 go run ./cmd/gts gtschunk . --tokens 500 --json
 go run ./cmd/gts gtsscope cmd/gts/main.go --line 300 --cache .gts/index.json --json
-go run ./cmd/gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic --json
+go run ./cmd/gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic --semantic-depth 2 --json
 go run ./cmd/gts gtslint . --rule 'no function longer than 50 lines'
 go run ./cmd/gts gtslint . --rule 'no import fmt'
 go run ./cmd/gts gtslint . --pattern ./rules/no-empty-func.scm
@@ -104,7 +104,7 @@ Supported kinds in this version:
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
 - Scope resolution (`gtsscope`) reports in-scope imports, package symbols, and local declarations for Go files.
-- Context packing supports spatial mode and semantic mode (`gtscontext --semantic`) using outgoing call dependencies.
+- Context packing supports spatial mode and semantic mode (`gtscontext --semantic`) with configurable call-depth traversal (`--semantic-depth`).
 - Structural linting (`gtslint`) supports built-in rules plus query-file patterns (`--pattern rule.scm`).
 - Index parsing is parallelized by default; set `GTS_INDEX_WORKERS` to tune worker count.
 - File scanning filters to parser-supported extensions during walk to reduce indexing overhead.
@@ -114,8 +114,8 @@ Supported kinds in this version:
 - Phase 1 complete: raw tree-sitter query surface (`gtsquery`) is shipped.
 - Phase 2 complete: references are indexed and exposed through `gtsrefs`, `gtscallgraph`, and `gtsdead`.
 - Phase 3 in progress:
-  - Shipped: `gtscontext --semantic` now follows direct call dependencies from the focus symbol.
-  - Next: add type dependency pulls and multi-hop relevance ranking under token budget.
+  - Shipped: `gtscontext --semantic` follows call dependencies from the focus symbol with configurable depth.
+  - Next: add type dependency pulls and tighter relevance weighting across imports/types/calls.
 - Phase 4 in progress:
   - Shipped: `gtslint --pattern path.scm` for query-file-based structural lint rules.
   - Next: add a built-in starter query pattern pack and richer pattern metadata.

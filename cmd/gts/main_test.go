@@ -870,6 +870,60 @@ func work() {
 	}
 }
 
+func TestRunContextSemanticDepth(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func leaf() {}
+
+func mid() {
+	leaf()
+}
+
+func work() {
+	mid()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runContext([]string{
+		sourcePath,
+		"--root", tmpDir,
+		"--line", "10",
+		"--tokens", "400",
+		"--semantic",
+		"--semantic-depth", "2",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runContext returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{"semantic: true", "semantic-depth: 2", "mid", "leaf"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected output to contain %q, got:\n%s", expected, text)
+		}
+	}
+}
+
 func TestRunChunk(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "main.go")
