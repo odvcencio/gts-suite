@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
+	"gts-suite/internal/chunk"
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
 	"gts-suite/internal/xref"
@@ -21,7 +22,7 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead"} {
+	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint"} {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
@@ -189,5 +190,55 @@ func main() {
 	}
 	if count != 1 {
 		t.Fatalf("expected dead count=1, got %d", count)
+	}
+}
+
+func TestServiceChunkAndLint(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	patternPath := filepath.Join(tmpDir, "empty.scm")
+	source := `package sample
+
+func Empty() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile source failed: %v", err)
+	}
+	if err := os.WriteFile(patternPath, []byte(`(function_declaration (block) @violation)`), 0o644); err != nil {
+		t.Fatalf("WriteFile pattern failed: %v", err)
+	}
+
+	service := NewService(tmpDir, "")
+
+	chunkRaw, err := service.Call("gts_chunk", map[string]any{
+		"tokens": 200,
+	})
+	if err != nil {
+		t.Fatalf("gts_chunk call failed: %v", err)
+	}
+	chunkReport, ok := chunkRaw.(chunk.Report)
+	if !ok {
+		t.Fatalf("expected chunk.Report, got %T", chunkRaw)
+	}
+	if chunkReport.ChunkCount == 0 {
+		t.Fatalf("expected non-zero chunks")
+	}
+
+	lintRaw, err := service.Call("gts_lint", map[string]any{
+		"pattern": patternPath,
+	})
+	if err != nil {
+		t.Fatalf("gts_lint call failed: %v", err)
+	}
+	lintResult, ok := lintRaw.(map[string]any)
+	if !ok {
+		t.Fatalf("expected lint map result, got %T", lintRaw)
+	}
+	count, ok := lintResult["count"].(int)
+	if !ok {
+		t.Fatalf("expected lint count int, got %T", lintResult["count"])
+	}
+	if count == 0 {
+		t.Fatalf("expected lint violations > 0")
 	}
 }

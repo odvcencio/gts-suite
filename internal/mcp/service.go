@@ -11,9 +11,11 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
+	"gts-suite/internal/chunk"
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
 	"gts-suite/internal/index"
+	"gts-suite/internal/lint"
 	"gts-suite/internal/model"
 	gtsscope "gts-suite/internal/scope"
 	"gts-suite/internal/xref"
@@ -154,6 +156,31 @@ func (s *Service) Tools() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "gts_chunk",
+			Description: "Split code into AST-boundary chunks for retrieval/indexing",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":   map[string]any{"type": "string"},
+					"cache":  map[string]any{"type": "string"},
+					"tokens": map[string]any{"type": "integer"},
+				},
+			},
+		},
+		{
+			Name:        "gts_lint",
+			Description: "Run structural lint rules and query-pattern rules against index",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"path":    map[string]any{"type": "string"},
+					"cache":   map[string]any{"type": "string"},
+					"rule":    map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+					"pattern": map[string]any{"oneOf": []any{map[string]any{"type": "string"}, map[string]any{"type": "array", "items": map[string]any{"type": "string"}}}},
+				},
+			},
+		},
 	}
 }
 
@@ -173,6 +200,10 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callCallgraph(args)
 	case "gts_dead":
 		return s.callDead(args)
+	case "gts_chunk":
+		return s.callChunk(args)
+	case "gts_lint":
+		return s.callLint(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -621,6 +652,91 @@ func (s *Service) callDead(args map[string]any) (any, error) {
 		"scanned": scanned,
 		"count":   len(matches),
 		"matches": matches,
+	}, nil
+}
+
+func (s *Service) callChunk(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	tokens := intArg(args, "tokens", 800)
+	if tokens <= 0 {
+		return nil, fmt.Errorf("tokens must be > 0")
+	}
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+	filterPath := ""
+	if strings.TrimSpace(cachePath) != "" && strings.TrimSpace(target) != "" {
+		filterPath = target
+	}
+	report, err := chunk.Build(idx, chunk.Options{
+		TokenBudget: tokens,
+		FilterPath:  filterPath,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
+func (s *Service) callLint(args map[string]any) (any, error) {
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	rawRules := stringSliceArg(args, "rule")
+	rawPatterns := stringSliceArg(args, "pattern")
+	if len(rawRules) == 0 && len(rawPatterns) == 0 {
+		return nil, fmt.Errorf("at least one rule or pattern is required")
+	}
+
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	rules := make([]lint.Rule, 0, len(rawRules))
+	for _, rawRule := range rawRules {
+		rule, parseErr := lint.ParseRule(rawRule)
+		if parseErr != nil {
+			return nil, fmt.Errorf("parse rule %q: %w", rawRule, parseErr)
+		}
+		rules = append(rules, rule)
+	}
+
+	patterns := make([]lint.QueryPattern, 0, len(rawPatterns))
+	for _, rawPattern := range rawPatterns {
+		pattern, loadErr := lint.LoadQueryPattern(rawPattern)
+		if loadErr != nil {
+			return nil, fmt.Errorf("load pattern %q: %w", rawPattern, loadErr)
+		}
+		patterns = append(patterns, pattern)
+	}
+
+	violations := lint.Evaluate(idx, rules)
+	patternViolations, err := lint.EvaluatePatterns(idx, patterns)
+	if err != nil {
+		return nil, err
+	}
+	violations = append(violations, patternViolations...)
+	sort.Slice(violations, func(i, j int) bool {
+		if violations[i].File == violations[j].File {
+			if violations[i].StartLine == violations[j].StartLine {
+				if violations[i].RuleID == violations[j].RuleID {
+					return violations[i].Name < violations[j].Name
+				}
+				return violations[i].RuleID < violations[j].RuleID
+			}
+			return violations[i].StartLine < violations[j].StartLine
+		}
+		return violations[i].File < violations[j].File
+	})
+
+	return map[string]any{
+		"rules":      rules,
+		"patterns":   patterns,
+		"violations": violations,
+		"count":      len(violations),
 	}, nil
 }
 

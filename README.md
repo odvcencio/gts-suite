@@ -102,7 +102,7 @@ Supported kinds in this version:
 - Structural diff detects symbol additions/removals/modifications and import changes.
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
-- MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, and `gts_dead` via stdio JSON-RPC.
+- MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, `gts_dead`, `gts_chunk`, and `gts_lint` via stdio JSON-RPC.
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
@@ -126,5 +126,5 @@ Supported kinds in this version:
   - Shipped: changed-file watch updates now run through incremental watch apply and maintain per-file parse trees.
   - Next: improve diff/edit application for more append/EOF cases and add persistent warm watch-state hydration.
 - Phase 6 in progress:
-  - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for query/refs/context/scope/deps/callgraph/dead.
-  - Next: add MCP wrappers for refactor/lint/chunk and richer schema/streaming diagnostics.
+  - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for query/refs/context/scope/deps/callgraph/dead/chunk/lint.
+  - Next: add MCP wrappers for refactor/diff and richer schema/streaming diagnostics.
