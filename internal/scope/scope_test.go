@@ -3,7 +3,6 @@ package scope
 import (
 	"os"
 	"path/filepath"
-	"strings"
 	"testing"
 
 	"gts-suite/internal/index"
@@ -62,20 +61,59 @@ func (s *Service) Work(input string) (out int) {
 	}
 }
 
-func TestBuild_RejectsNonGo(t *testing.T) {
-	idx, err := index.NewBuilder().BuildPath(".")
+func TestBuild_RejectsUnsupportedLanguage(t *testing.T) {
+	tmpDir := t.TempDir()
+	mdPath := filepath.Join(tmpDir, "notes.md")
+	if err := os.WriteFile(mdPath, []byte("# Hello\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
 	if err != nil {
 		t.Fatalf("BuildPath returned error: %v", err)
 	}
 	_, err = Build(idx, Options{
-		FilePath: "README.md",
+		FilePath: mdPath,
 		Line:     1,
 	})
 	if err == nil {
-		t.Fatal("expected non-Go file to fail")
+		t.Fatal("expected unsupported language file to fail")
 	}
-	if !strings.Contains(err.Error(), "supports Go files only") {
-		t.Fatalf("unexpected error: %v", err)
+}
+
+func TestBuild_PythonScope(t *testing.T) {
+	tmpDir := t.TempDir()
+	pyPath := filepath.Join(tmpDir, "demo.py")
+	source := `import os
+
+def helper():
+    pass
+
+def work(name):
+    x = 1
+    print(x)
+`
+	if err := os.WriteFile(pyPath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+
+	report, err := Build(idx, Options{
+		FilePath: pyPath,
+		Line:     7, // x = 1
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	// Verify package-level symbols from index are visible
+	for _, name := range []string{"helper", "work"} {
+		if !hasSymbol(report, name) {
+			t.Fatalf("expected symbol %q in python scope report", name)
+		}
 	}
 }
 

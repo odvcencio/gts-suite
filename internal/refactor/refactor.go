@@ -60,10 +60,10 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 		return Report{}, fmt.Errorf("index is nil")
 	}
 	newName = strings.TrimSpace(newName)
-	if !token.IsIdentifier(newName) {
-		return Report{}, fmt.Errorf("new name %q is not a valid Go identifier", newName)
+	if !isValidIdentifier(newName) {
+		return Report{}, fmt.Errorf("new name %q is not a valid identifier", newName)
 	}
-	engine := normalizeEngine(opts.Engine)
+	engine := selectEngine(idx, selector, opts.Engine)
 	if engine == "" {
 		return Report{}, fmt.Errorf("unknown refactor engine %q", opts.Engine)
 	}
@@ -221,17 +221,52 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 	return report, nil
 }
 
-func normalizeEngine(raw string) string {
+// isValidIdentifier checks if a name is a valid identifier across languages.
+// Accepts ASCII letters, digits, underscores; must start with letter or underscore.
+func isValidIdentifier(name string) bool {
+	if name == "" {
+		return false
+	}
+	for i, ch := range name {
+		if ch == '_' {
+			continue
+		}
+		if ch >= 'a' && ch <= 'z' || ch >= 'A' && ch <= 'Z' {
+			continue
+		}
+		if i > 0 && ch >= '0' && ch <= '9' {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+// selectEngine picks the refactor engine. If the user explicitly chose one, use it.
+// Otherwise, auto-select: "go" for Go-only targets, "treesitter" when any non-Go file is matched.
+func selectEngine(idx *model.Index, selector query.Selector, raw string) string {
 	engine := strings.ToLower(strings.TrimSpace(raw))
-	if engine == "" {
-		return "go"
+	if engine != "" {
+		switch engine {
+		case "go", "treesitter":
+			return engine
+		default:
+			return ""
+		}
 	}
-	switch engine {
-	case "go", "treesitter":
-		return engine
-	default:
-		return ""
+
+	// Auto-select: check if any matching symbol is in a non-Go file
+	for _, file := range idx.Files {
+		if file.Language == "go" {
+			continue
+		}
+		for _, symbol := range file.Symbols {
+			if selector.Match(symbol) {
+				return "treesitter"
+			}
+		}
 	}
+	return "go"
 }
 
 func supportsDeclarationRename(kind string) bool {

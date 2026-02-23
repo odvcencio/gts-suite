@@ -1,16 +1,14 @@
 package scope
 
 import (
-	"bytes"
 	"fmt"
-	"go/ast"
-	"go/parser"
-	"go/printer"
-	"go/token"
 	"os"
 	"path/filepath"
 	"sort"
 	"strings"
+
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 
 	"gts-suite/internal/model"
 )
@@ -50,9 +48,6 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	if err != nil {
 		return Report{}, err
 	}
-	if strings.ToLower(filepath.Ext(absPath)) != ".go" {
-		return Report{}, fmt.Errorf("gtsscope currently supports Go files only")
-	}
 
 	fileSummary, err := findFileSummary(idx, relPath)
 	if err != nil {
@@ -64,16 +59,26 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		return Report{}, err
 	}
 
-	fset := token.NewFileSet()
-	parsed, err := parser.ParseFile(fset, absPath, source, parser.SkipObjectResolution)
+	entry := grammars.DetectLanguage(absPath)
+	if entry == nil {
+		return Report{}, fmt.Errorf("unsupported language for %s", absPath)
+	}
+
+	bound, err := grammars.ParseFile(absPath, source)
 	if err != nil {
-		return Report{}, err
+		return Report{}, fmt.Errorf("tree-sitter parse failed for %s: %w", absPath, err)
+	}
+	defer bound.Release()
+
+	root := bound.RootNode()
+	if root == nil {
+		return Report{}, fmt.Errorf("tree-sitter produced nil root for %s", absPath)
 	}
 
 	report := Report{
 		File:    fileSummary.Path,
 		Line:    opts.Line,
-		Package: parsed.Name.Name,
+		Package: inferPackageName(bound, root, fileSummary),
 	}
 
 	focus := findFocusSymbol(fileSummary.Symbols, opts.Line)
@@ -83,13 +88,9 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	}
 
 	collector := newSymbolCollector()
-	addImports(collector, fset, parsed.Imports)
-	addIndexedPackageSymbols(collector, idx, fileSummary.Path)
-	addPackageDecls(collector, fset, parsed.Decls, opts.Line)
-
-	if fn := findContainingFunction(fset, parsed, opts.Line); fn != nil {
-		addFunctionScope(collector, fset, fn, opts.Line)
-	}
+	addImportsFromIndex(collector, fileSummary)
+	addIndexedPackageSymbols(collector, idx, fileSummary)
+	addLocalScope(collector, bound, root, source, opts.Line)
 
 	report.Symbols = collector.symbols()
 	return report, nil
@@ -131,51 +132,71 @@ func findFileSummary(idx *model.Index, relPath string) (model.FileSummary, error
 }
 
 func findFocusSymbol(symbols []model.Symbol, line int) *model.Symbol {
+	var best *model.Symbol
+	bestSpan := int(^uint(0) >> 1) // max int
 	for i := range symbols {
-		symbol := symbols[i]
-		if line >= symbol.StartLine && line <= symbol.EndLine {
-			return &symbols[i]
+		s := &symbols[i]
+		if line >= s.StartLine && line <= s.EndLine {
+			span := s.EndLine - s.StartLine
+			if span < bestSpan {
+				best = s
+				bestSpan = span
+			}
 		}
 	}
-	return nil
+	return best
 }
 
-func addImports(collector *symbolCollector, fset *token.FileSet, imports []*ast.ImportSpec) {
-	for _, imp := range imports {
-		path := strings.Trim(imp.Path.Value, `"`)
-		name := ""
-		switch {
-		case imp.Name == nil:
-			name = importBase(path)
-		case imp.Name.Name == "_":
+func inferPackageName(bound *gotreesitter.BoundTree, root *gotreesitter.Node, summary model.FileSummary) string {
+	// For Go files, extract package name from package_clause
+	if summary.Language == "go" {
+		for i := 0; i < root.ChildCount(); i++ {
+			child := root.Child(i)
+			if bound.NodeType(child) == "package_clause" {
+				for j := 0; j < child.ChildCount(); j++ {
+					gc := child.Child(j)
+					if bound.NodeType(gc) == "package_identifier" {
+						return strings.TrimSpace(bound.NodeText(gc))
+					}
+				}
+			}
+		}
+	}
+	// Fallback: use directory name
+	dir := filepath.Dir(filepath.Clean(summary.Path))
+	if dir == "." {
+		return filepath.Base(filepath.Dir(summary.Path))
+	}
+	return filepath.Base(dir)
+}
+
+func addImportsFromIndex(collector *symbolCollector, summary model.FileSummary) {
+	for _, imp := range summary.Imports {
+		name := importBase(imp)
+		if name == "" || name == "_" {
 			continue
-		default:
-			name = imp.Name.Name
 		}
-
-		kind := "import"
-		if name == "." {
-			kind = "import_dot"
-		}
-		collector.add(name, kind, path, lineAt(fset, imp.Pos()))
+		collector.add(name, "import", imp, 0)
 	}
 }
 
-func addIndexedPackageSymbols(collector *symbolCollector, idx *model.Index, filePath string) {
-	dir := filepath.ToSlash(filepath.Dir(filepath.Clean(filePath)))
-	currentIsTest := strings.HasSuffix(filepath.ToSlash(filepath.Clean(filePath)), "_test.go")
+func addIndexedPackageSymbols(collector *symbolCollector, idx *model.Index, fileSummary model.FileSummary) {
+	dir := filepath.ToSlash(filepath.Dir(filepath.Clean(fileSummary.Path)))
+	isTest := strings.HasSuffix(filepath.ToSlash(filepath.Clean(fileSummary.Path)), "_test.go")
 	for _, file := range idx.Files {
 		fileDir := filepath.ToSlash(filepath.Dir(filepath.Clean(file.Path)))
 		if fileDir != dir {
 			continue
 		}
-		if strings.HasSuffix(filepath.ToSlash(filepath.Clean(file.Path)), "_test.go") != currentIsTest {
+		if strings.HasSuffix(filepath.ToSlash(filepath.Clean(file.Path)), "_test.go") != isTest {
 			continue
 		}
 		for _, symbol := range file.Symbols {
 			switch symbol.Kind {
 			case "function_definition":
 				collector.add(symbol.Name, "package_function", symbol.Signature, symbol.StartLine)
+			case "method_definition":
+				collector.add(symbol.Name, "package_method", symbol.Signature, symbol.StartLine)
 			case "type_definition":
 				collector.add(symbol.Name, "package_type", symbol.Signature, symbol.StartLine)
 			}
@@ -183,272 +204,428 @@ func addIndexedPackageSymbols(collector *symbolCollector, idx *model.Index, file
 	}
 }
 
-func addPackageDecls(collector *symbolCollector, fset *token.FileSet, decls []ast.Decl, line int) {
-	for _, decl := range decls {
-		if lineAt(fset, decl.Pos()) > line {
-			break
+// addLocalScope walks the tree-sitter AST to find declarations visible at the target line.
+// It finds the innermost scope containing the line and collects all declarations
+// visible from that point: function parameters, local variables, and block-scoped names.
+func addLocalScope(collector *symbolCollector, bound *gotreesitter.BoundTree, root *gotreesitter.Node, _ []byte, line int) {
+	// Find the innermost function/method containing the target line
+	funcNode := findContainingFunction(bound, root, line)
+	if funcNode == nil {
+		return
+	}
+
+	// Collect function parameters
+	collectFunctionParams(collector, bound, funcNode)
+
+	// Find the function body and walk it for local declarations
+	body := findFunctionBody(bound, funcNode)
+	if body != nil {
+		collectBlockScope(collector, bound, body, line)
+	}
+}
+
+// findContainingFunction finds the innermost function/method declaration containing the line.
+func findContainingFunction(bound *gotreesitter.BoundTree, root *gotreesitter.Node, line int) *gotreesitter.Node {
+	var best *gotreesitter.Node
+	gotreesitter.Walk(root, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		nodeType := bound.NodeType(node)
+		if !isFunctionDecl(nodeType) {
+			return gotreesitter.WalkContinue
 		}
-		switch d := decl.(type) {
-		case *ast.FuncDecl:
-			if d.Recv != nil {
-				continue
+		start := int(node.StartPoint().Row) + 1
+		end := int(node.EndPoint().Row) + 1
+		if line >= start && line <= end {
+			best = node
+		}
+		return gotreesitter.WalkContinue
+	})
+	return best
+}
+
+func isFunctionDecl(nodeType string) bool {
+	switch nodeType {
+	case "function_declaration", "method_declaration", "func_literal",
+		"method_definition", "arrow_function",
+		"function", "generator_function", "generator_function_declaration",
+		"function_definition", "function_item",
+		"constructor_declaration",
+		"method",
+		"function_definition_statement":
+		return true
+	}
+	return false
+}
+
+// collectFunctionParams extracts parameter names from a function node.
+// For Go methods, the first parameter_list is the receiver, the second is params,
+// and the third is results. For regular functions, the first is params.
+func collectFunctionParams(collector *symbolCollector, bound *gotreesitter.BoundTree, funcNode *gotreesitter.Node) {
+	funcType := bound.NodeType(funcNode)
+	isGoMethod := funcType == "method_declaration"
+
+	paramListIndex := 0
+	for i := 0; i < funcNode.ChildCount(); i++ {
+		child := funcNode.Child(i)
+		nodeType := bound.NodeType(child)
+
+		switch nodeType {
+		case "parameter_list":
+			if isGoMethod && paramListIndex == 0 {
+				// Go method receiver
+				collectReceiverParam(collector, bound, child)
+			} else {
+				// Regular params or result params
+				collectParamList(collector, bound, child)
 			}
-			collector.add(d.Name.Name, "package_function", functionSignature(d), lineAt(fset, d.Pos()))
-		case *ast.GenDecl:
-			addGenDeclNames(collector, fset, d, "package")
+			paramListIndex++
+		case "parameters", "formal_parameters",
+			"function_params", "lambda_parameters":
+			collectParamList(collector, bound, child)
 		}
 	}
 }
 
-func addFunctionScope(collector *symbolCollector, fset *token.FileSet, fn *ast.FuncDecl, line int) {
-	if fn.Recv != nil {
-		addNamedFields(collector, fset, fn.Recv, "receiver")
-	}
-	if fn.Type != nil {
-		addNamedFields(collector, fset, fn.Type.TypeParams, "type_param")
-		addNamedFields(collector, fset, fn.Type.Params, "param")
-		addNamedFields(collector, fset, fn.Type.Results, "result")
-	}
-	if fn.Body != nil {
-		collectBlockScope(collector, fset, fn.Body, line)
-	}
+func collectParamList(collector *symbolCollector, bound *gotreesitter.BoundTree, paramList *gotreesitter.Node) {
+	gotreesitter.Walk(paramList, func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		nodeType := bound.NodeType(node)
+		switch nodeType {
+		case "parameter_declaration", "parameter", "required_parameter",
+			"optional_parameter", "rest_parameter":
+			name, detail := extractParamNameAndType(bound, node)
+			if name != "" && name != "_" {
+				collector.add(name, "param", detail, int(node.StartPoint().Row)+1)
+			}
+		case "identifier":
+			// For Python-style simple params (just identifiers in the param list)
+			if depth == 1 {
+				name := strings.TrimSpace(bound.NodeText(node))
+				if name != "" && name != "self" && name != "cls" && name != "_" {
+					collector.add(name, "param", "", int(node.StartPoint().Row)+1)
+				}
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
 }
 
-func findContainingFunction(fset *token.FileSet, file *ast.File, line int) *ast.FuncDecl {
-	for _, decl := range file.Decls {
-		fn, ok := decl.(*ast.FuncDecl)
-		if !ok || fn.Body == nil {
+func extractParamNameAndType(bound *gotreesitter.BoundTree, paramNode *gotreesitter.Node) (string, string) {
+	name := ""
+	typeStr := ""
+	for i := 0; i < paramNode.ChildCount(); i++ {
+		child := paramNode.Child(i)
+		if !child.IsNamed() {
 			continue
 		}
-		start := lineAt(fset, fn.Body.Pos())
-		end := lineAt(fset, fn.Body.End())
-		if line >= start && line <= end {
-			return fn
+		childType := bound.NodeType(child)
+		switch childType {
+		case "identifier", "field_identifier", "name":
+			if name == "" {
+				name = strings.TrimSpace(bound.NodeText(child))
+			}
+		case "type_identifier", "pointer_type", "slice_type",
+			"array_type", "map_type", "channel_type",
+			"interface_type", "struct_type", "function_type",
+			"qualified_type", "generic_type",
+			"type_annotation", "type":
+			typeStr = strings.TrimSpace(bound.NodeText(child))
+		}
+	}
+	return name, typeStr
+}
+
+func collectReceiverParam(collector *symbolCollector, bound *gotreesitter.BoundTree, paramList *gotreesitter.Node) {
+	for i := 0; i < paramList.ChildCount(); i++ {
+		child := paramList.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+		nodeType := bound.NodeType(child)
+		if nodeType == "parameter_declaration" {
+			name, detail := extractParamNameAndType(bound, child)
+			if name != "" && name != "_" {
+				collector.add(name, "receiver", detail, int(child.StartPoint().Row)+1)
+				return
+			}
+		}
+	}
+}
+
+// findFunctionBody locates the body block of a function node.
+func findFunctionBody(bound *gotreesitter.BoundTree, funcNode *gotreesitter.Node) *gotreesitter.Node {
+	for i := 0; i < funcNode.ChildCount(); i++ {
+		child := funcNode.Child(i)
+		nodeType := bound.NodeType(child)
+		if isBlockNode(nodeType) {
+			return child
 		}
 	}
 	return nil
 }
 
-func collectBlockScope(collector *symbolCollector, fset *token.FileSet, block *ast.BlockStmt, line int) {
-	if block == nil {
-		return
+func isBlockNode(nodeType string) bool {
+	switch nodeType {
+	case "block", "block_statement", "compound_statement",
+		"statement_block", "function_body", "suite",
+		"body", "do_block", "class_body":
+		return true
 	}
-	for _, stmt := range block.List {
-		start := lineAt(fset, stmt.Pos())
+	return false
+}
+
+// collectBlockScope walks a block node collecting declarations visible at the target line.
+// It handles both direct statement children and statement_list wrappers.
+func collectBlockScope(collector *symbolCollector, bound *gotreesitter.BoundTree, block *gotreesitter.Node, line int) {
+	stmts := statementsOf(bound, block)
+	for _, child := range stmts {
+		start := int(child.StartPoint().Row) + 1
+		end := int(child.EndPoint().Row) + 1
+
 		if start > line {
 			break
 		}
 
-		end := lineAt(fset, stmt.End())
 		if line > end {
-			addStmtDeclsVisibleAfter(collector, fset, stmt)
+			collectDeclsFromStmt(collector, bound, child)
 			continue
 		}
 
-		addStmtDeclsInside(collector, fset, stmt, line)
+		// We're inside this statement — collect its init-clause decls and recurse
+		collectDeclsFromStmt(collector, bound, child)
+		recurseIntoContainingBlock(collector, bound, child, line)
 		return
 	}
 }
 
-func addStmtDeclsVisibleAfter(collector *symbolCollector, fset *token.FileSet, stmt ast.Stmt) {
-	switch s := stmt.(type) {
-	case *ast.DeclStmt:
-		if decl, ok := s.Decl.(*ast.GenDecl); ok {
-			addGenDeclNames(collector, fset, decl, "local")
-		}
-	case *ast.AssignStmt:
-		if s.Tok == token.DEFINE {
-			addAssignNames(collector, fset, s, "local_var")
-		}
-	case *ast.LabeledStmt:
-		addStmtDeclsVisibleAfter(collector, fset, s.Stmt)
-	}
-}
-
-func addStmtDeclsInside(collector *symbolCollector, fset *token.FileSet, stmt ast.Stmt, line int) {
-	switch s := stmt.(type) {
-	case *ast.BlockStmt:
-		collectBlockScope(collector, fset, s, line)
-	case *ast.DeclStmt:
-		if decl, ok := s.Decl.(*ast.GenDecl); ok {
-			addGenDeclNames(collector, fset, decl, "local")
-		}
-	case *ast.AssignStmt:
-		if s.Tok == token.DEFINE {
-			addAssignNames(collector, fset, s, "local_var")
-		}
-	case *ast.IfStmt:
-		if s.Init != nil {
-			addStmtDeclsVisibleAfter(collector, fset, s.Init)
-		}
-		if s.Body != nil {
-			start, end := lineAt(fset, s.Body.Pos()), lineAt(fset, s.Body.End())
-			if line >= start && line <= end {
-				collectBlockScope(collector, fset, s.Body, line)
-				return
-			}
-		}
-		if s.Else != nil {
-			start, end := lineAt(fset, s.Else.Pos()), lineAt(fset, s.Else.End())
-			if line >= start && line <= end {
-				addStmtDeclsInside(collector, fset, s.Else, line)
-				return
-			}
-		}
-	case *ast.ForStmt:
-		if s.Init != nil {
-			addStmtDeclsVisibleAfter(collector, fset, s.Init)
-		}
-		if s.Body != nil {
-			collectBlockScope(collector, fset, s.Body, line)
-		}
-	case *ast.RangeStmt:
-		if s.Tok == token.DEFINE {
-			addRangeNames(collector, fset, s, "local_var")
-		}
-		if s.Body != nil {
-			collectBlockScope(collector, fset, s.Body, line)
-		}
-	case *ast.SwitchStmt:
-		if s.Init != nil {
-			addStmtDeclsVisibleAfter(collector, fset, s.Init)
-		}
-		collectCaseClauses(collector, fset, s.Body, line)
-	case *ast.TypeSwitchStmt:
-		if s.Init != nil {
-			addStmtDeclsVisibleAfter(collector, fset, s.Init)
-		}
-		collectCaseClauses(collector, fset, s.Body, line)
-	case *ast.SelectStmt:
-		collectCommClauses(collector, fset, s.Body, line)
-	case *ast.LabeledStmt:
-		addStmtDeclsInside(collector, fset, s.Stmt, line)
-	}
-}
-
-func collectCaseClauses(collector *symbolCollector, fset *token.FileSet, block *ast.BlockStmt, line int) {
-	if block == nil {
-		return
-	}
-	for _, entry := range block.List {
-		clause, ok := entry.(*ast.CaseClause)
-		if !ok {
+// statementsOf returns the named children that are actual statements.
+// Some grammars wrap statements in a statement_list node; others have them directly.
+func statementsOf(bound *gotreesitter.BoundTree, block *gotreesitter.Node) []*gotreesitter.Node {
+	var stmts []*gotreesitter.Node
+	for i := 0; i < block.ChildCount(); i++ {
+		child := block.Child(i)
+		if !child.IsNamed() {
 			continue
 		}
-		start, end := lineAt(fset, clause.Pos()), lineAt(fset, clause.End())
+		nodeType := bound.NodeType(child)
+		if nodeType == "statement_list" || nodeType == "statement_block_body" {
+			// Unwrap: the real statements are children of statement_list
+			for j := 0; j < child.ChildCount(); j++ {
+				gc := child.Child(j)
+				if gc.IsNamed() {
+					stmts = append(stmts, gc)
+				}
+			}
+			continue
+		}
+		stmts = append(stmts, child)
+	}
+	return stmts
+}
+
+// collectDeclsFromStmt extracts variable/const declarations from a statement node.
+func collectDeclsFromStmt(collector *symbolCollector, bound *gotreesitter.BoundTree, stmt *gotreesitter.Node) {
+	nodeType := bound.NodeType(stmt)
+	switch nodeType {
+	// Go short variable declarations
+	case "short_var_declaration":
+		collectShortVarDecl(collector, bound, stmt)
+	// Go var/const declarations
+	case "var_declaration", "const_declaration":
+		collectVarConstDecl(collector, bound, stmt, nodeType)
+	// Go type declarations inside functions
+	case "type_declaration":
+		collectTypeDecl(collector, bound, stmt)
+	// JS/TS variable declarations
+	case "variable_declaration", "lexical_declaration":
+		collectJSVarDecl(collector, bound, stmt)
+	// Python assignment
+	case "assignment", "augmented_assignment":
+		collectPythonAssignment(collector, bound, stmt)
+	// Rust let bindings
+	case "let_declaration":
+		collectRustLetDecl(collector, bound, stmt)
+	// Go range statements
+	case "for_statement":
+		collectGoForDecls(collector, bound, stmt)
+	case "range_clause":
+		collectRangeClauseDecls(collector, bound, stmt)
+	// Labeled statements — recurse to inner stmt
+	case "labeled_statement":
+		for i := 0; i < stmt.ChildCount(); i++ {
+			inner := stmt.Child(i)
+			if inner.IsNamed() && bound.NodeType(inner) != "label_name" && bound.NodeType(inner) != "identifier" {
+				collectDeclsFromStmt(collector, bound, inner)
+				break
+			}
+		}
+	}
+}
+
+func collectShortVarDecl(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	// In Go short var decl, the LHS identifiers come before `:=`
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		nodeType := bound.NodeType(child)
+		if nodeType == "expression_list" {
+			for j := 0; j < child.ChildCount(); j++ {
+				gc := child.Child(j)
+				if bound.NodeType(gc) == "identifier" {
+					name := strings.TrimSpace(bound.NodeText(gc))
+					if name != "" && name != "_" {
+						collector.add(name, "local_var", "", int(gc.StartPoint().Row)+1)
+					}
+				}
+			}
+			return
+		}
+		if nodeType == "identifier" {
+			name := strings.TrimSpace(bound.NodeText(child))
+			if name != "" && name != "_" {
+				collector.add(name, "local_var", "", int(child.StartPoint().Row)+1)
+			}
+		}
+	}
+}
+
+func collectVarConstDecl(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node, declType string) {
+	kind := "local_var"
+	if declType == "const_declaration" {
+		kind = "local_const"
+	}
+	gotreesitter.Walk(node, func(child *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		childType := bound.NodeType(child)
+		if childType == "var_spec" || childType == "const_spec" {
+			for i := 0; i < child.ChildCount(); i++ {
+				gc := child.Child(i)
+				if bound.NodeType(gc) == "identifier" {
+					name := strings.TrimSpace(bound.NodeText(gc))
+					if name != "" && name != "_" {
+						collector.add(name, kind, "", int(gc.StartPoint().Row)+1)
+					}
+				}
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+}
+
+func collectTypeDecl(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	gotreesitter.Walk(node, func(child *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if bound.NodeType(child) == "type_spec" {
+			for i := 0; i < child.ChildCount(); i++ {
+				gc := child.Child(i)
+				if bound.NodeType(gc) == "type_identifier" || bound.NodeType(gc) == "identifier" {
+					name := strings.TrimSpace(bound.NodeText(gc))
+					if name != "" {
+						collector.add(name, "local_type", "", int(gc.StartPoint().Row)+1)
+					}
+					break
+				}
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+}
+
+func collectJSVarDecl(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	gotreesitter.Walk(node, func(child *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		childType := bound.NodeType(child)
+		if childType == "variable_declarator" {
+			for i := 0; i < child.ChildCount(); i++ {
+				gc := child.Child(i)
+				if bound.NodeType(gc) == "identifier" {
+					name := strings.TrimSpace(bound.NodeText(gc))
+					if name != "" {
+						collector.add(name, "local_var", "", int(gc.StartPoint().Row)+1)
+					}
+					break
+				}
+			}
+		}
+		return gotreesitter.WalkContinue
+	})
+}
+
+func collectPythonAssignment(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	// First child is the LHS
+	if node.ChildCount() == 0 {
+		return
+	}
+	lhs := node.Child(0)
+	if lhs != nil && bound.NodeType(lhs) == "identifier" {
+		name := strings.TrimSpace(bound.NodeText(lhs))
+		if name != "" && name != "_" {
+			collector.add(name, "local_var", "", int(lhs.StartPoint().Row)+1)
+		}
+	}
+}
+
+func collectRustLetDecl(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if bound.NodeType(child) == "identifier" {
+			name := strings.TrimSpace(bound.NodeText(child))
+			if name != "" && name != "_" {
+				collector.add(name, "local_var", "", int(child.StartPoint().Row)+1)
+			}
+			return
+		}
+	}
+}
+
+func collectGoForDecls(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		nodeType := bound.NodeType(child)
+		switch nodeType {
+		case "range_clause":
+			collectRangeClauseDecls(collector, bound, child)
+		case "short_var_declaration":
+			collectShortVarDecl(collector, bound, child)
+		}
+	}
+}
+
+func collectRangeClauseDecls(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node) {
+	// range_clause children: expression_list `:=` `range` expression
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if bound.NodeType(child) == "expression_list" {
+			for j := 0; j < child.ChildCount(); j++ {
+				gc := child.Child(j)
+				if bound.NodeType(gc) == "identifier" {
+					name := strings.TrimSpace(bound.NodeText(gc))
+					if name != "" && name != "_" {
+						collector.add(name, "local_var", "", int(gc.StartPoint().Row)+1)
+					}
+				}
+			}
+			return
+		}
+	}
+}
+
+// recurseIntoContainingBlock finds inner blocks within a statement and recurses.
+func recurseIntoContainingBlock(collector *symbolCollector, bound *gotreesitter.BoundTree, node *gotreesitter.Node, line int) {
+	for i := 0; i < node.ChildCount(); i++ {
+		child := node.Child(i)
+		if !child.IsNamed() {
+			continue
+		}
+
+		start := int(child.StartPoint().Row) + 1
+		end := int(child.EndPoint().Row) + 1
 		if line < start || line > end {
 			continue
 		}
-		collectStmtList(collector, fset, clause.Body, line)
-		return
-	}
-}
 
-func collectCommClauses(collector *symbolCollector, fset *token.FileSet, block *ast.BlockStmt, line int) {
-	if block == nil {
-		return
-	}
-	for _, entry := range block.List {
-		clause, ok := entry.(*ast.CommClause)
-		if !ok {
-			continue
+		nodeType := bound.NodeType(child)
+		if isBlockNode(nodeType) {
+			collectBlockScope(collector, bound, child, line)
+			return
 		}
-		start, end := lineAt(fset, clause.Pos()), lineAt(fset, clause.End())
-		if line < start || line > end {
-			continue
-		}
-		if clause.Comm != nil {
-			addStmtDeclsVisibleAfter(collector, fset, clause.Comm)
-		}
-		collectStmtList(collector, fset, clause.Body, line)
-		return
+		// Recurse deeper for compound statements (if, for, switch, etc.)
+		recurseIntoContainingBlock(collector, bound, child, line)
 	}
-}
-
-func collectStmtList(collector *symbolCollector, fset *token.FileSet, stmts []ast.Stmt, line int) {
-	for _, stmt := range stmts {
-		start := lineAt(fset, stmt.Pos())
-		if start > line {
-			break
-		}
-		end := lineAt(fset, stmt.End())
-		if line > end {
-			addStmtDeclsVisibleAfter(collector, fset, stmt)
-			continue
-		}
-		addStmtDeclsInside(collector, fset, stmt, line)
-		return
-	}
-}
-
-func addNamedFields(collector *symbolCollector, fset *token.FileSet, fields *ast.FieldList, kind string) {
-	if fields == nil {
-		return
-	}
-	for _, field := range fields.List {
-		if len(field.Names) == 0 {
-			continue
-		}
-		detail := exprString(field.Type)
-		for _, name := range field.Names {
-			collector.add(name.Name, kind, detail, lineAt(fset, name.Pos()))
-		}
-	}
-}
-
-func addGenDeclNames(collector *symbolCollector, fset *token.FileSet, decl *ast.GenDecl, scope string) {
-	if decl == nil {
-		return
-	}
-	for _, spec := range decl.Specs {
-		switch s := spec.(type) {
-		case *ast.TypeSpec:
-			kind := scope + "_type"
-			collector.add(s.Name.Name, kind, typeSignature(s), lineAt(fset, s.Name.Pos()))
-		case *ast.ValueSpec:
-			kind := scope + "_value"
-			switch decl.Tok {
-			case token.VAR:
-				kind = scope + "_var"
-			case token.CONST:
-				kind = scope + "_const"
-			}
-			detail := exprString(s.Type)
-			for _, name := range s.Names {
-				collector.add(name.Name, kind, detail, lineAt(fset, name.Pos()))
-			}
-		}
-	}
-}
-
-func addAssignNames(collector *symbolCollector, fset *token.FileSet, stmt *ast.AssignStmt, kind string) {
-	for _, lhs := range stmt.Lhs {
-		ident, ok := lhs.(*ast.Ident)
-		if !ok {
-			continue
-		}
-		collector.add(ident.Name, kind, "", lineAt(fset, ident.Pos()))
-	}
-}
-
-func addRangeNames(collector *symbolCollector, fset *token.FileSet, stmt *ast.RangeStmt, kind string) {
-	if stmt.Key != nil {
-		if ident, ok := stmt.Key.(*ast.Ident); ok {
-			collector.add(ident.Name, kind, "", lineAt(fset, ident.Pos()))
-		}
-	}
-	if stmt.Value != nil {
-		if ident, ok := stmt.Value.(*ast.Ident); ok {
-			collector.add(ident.Name, kind, "", lineAt(fset, ident.Pos()))
-		}
-	}
-}
-
-func lineAt(fset *token.FileSet, pos token.Pos) int {
-	if !pos.IsValid() {
-		return 0
-	}
-	return fset.Position(pos).Line
 }
 
 func importBase(path string) string {
@@ -458,81 +635,6 @@ func importBase(path string) string {
 	}
 	parts := strings.Split(trimmed, "/")
 	return parts[len(parts)-1]
-}
-
-func functionSignature(fn *ast.FuncDecl) string {
-	var builder strings.Builder
-	builder.WriteString("func ")
-
-	if fn.Recv != nil && len(fn.Recv.List) > 0 {
-		builder.WriteString("(")
-		builder.WriteString(fieldString(fn.Recv.List[0], true))
-		builder.WriteString(") ")
-	}
-
-	builder.WriteString(fn.Name.Name)
-	builder.WriteString("(")
-	builder.WriteString(fieldListString(fn.Type.Params, true))
-	builder.WriteString(")")
-
-	if fn.Type.Results != nil && len(fn.Type.Results.List) > 0 {
-		results := fieldListString(fn.Type.Results, true)
-		if len(fn.Type.Results.List) == 1 && len(fn.Type.Results.List[0].Names) == 0 {
-			builder.WriteString(" ")
-			builder.WriteString(results)
-		} else {
-			builder.WriteString(" (")
-			builder.WriteString(results)
-			builder.WriteString(")")
-		}
-	}
-
-	return builder.String()
-}
-
-func typeSignature(typeSpec *ast.TypeSpec) string {
-	var builder strings.Builder
-	builder.WriteString("type ")
-	builder.WriteString(typeSpec.Name.Name)
-	if typeSpec.Type != nil {
-		builder.WriteString(" ")
-		builder.WriteString(exprString(typeSpec.Type))
-	}
-	return builder.String()
-}
-
-func fieldListString(list *ast.FieldList, includeNames bool) string {
-	if list == nil || len(list.List) == 0 {
-		return ""
-	}
-
-	parts := make([]string, 0, len(list.List))
-	for _, field := range list.List {
-		parts = append(parts, fieldString(field, includeNames))
-	}
-	return strings.Join(parts, ", ")
-}
-
-func fieldString(field *ast.Field, includeNames bool) string {
-	typeText := exprString(field.Type)
-	if !includeNames || len(field.Names) == 0 {
-		return typeText
-	}
-
-	names := make([]string, 0, len(field.Names))
-	for _, name := range field.Names {
-		names = append(names, name.Name)
-	}
-	return strings.Join(names, ", ") + " " + typeText
-}
-
-func exprString(expr ast.Expr) string {
-	if expr == nil {
-		return ""
-	}
-	var buffer bytes.Buffer
-	_ = printer.Fprint(&buffer, token.NewFileSet(), expr)
-	return buffer.String()
 }
 
 type symbolCollector struct {
