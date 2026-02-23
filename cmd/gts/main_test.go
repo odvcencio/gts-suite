@@ -92,6 +92,24 @@ func TestRunMCPRejectsPositionals(t *testing.T) {
 	}
 }
 
+func TestRunMCPParsesAllowWritesFlag(t *testing.T) {
+	// Command exits on EOF immediately; this verifies flag parsing + startup path.
+	originalStdin := os.Stdin
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdin = readPipe
+	defer func() {
+		os.Stdin = originalStdin
+	}()
+	_ = writePipe.Close()
+
+	if err := runMCP([]string{"--allow-writes"}); err != nil {
+		t.Fatalf("runMCP returned error with --allow-writes: %v", err)
+	}
+}
+
 func TestNormalizeFlagArgs_ReordersInterspersedFlags(t *testing.T) {
 	args := []string{"function_definition[name=/^Test/]", "--cache", ".gts/index.json", "--json"}
 	got := normalizeFlagArgs(args, map[string]bool{

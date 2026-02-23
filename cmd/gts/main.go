@@ -221,7 +221,7 @@ func newCLI() *cli {
 			ID:      "gtsmcp",
 			Aliases: []string{"mcp"},
 			Summary: "Run MCP stdio server for AI-agent tool integration",
-			Usage:   "gtsmcp [--root .] [--cache .gts/index.json]",
+			Usage:   "gtsmcp [--root .] [--cache .gts/index.json] [--allow-writes]",
 			Run:     runMCP,
 		},
 		{
@@ -368,6 +368,7 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtsdead . --kind callable")
 	fmt.Println("  gts gtsquery '(function_declaration (identifier) @name)' .")
 	fmt.Println("  gts gtsmcp --root .")
+	fmt.Println("  gts gtsmcp --root . --allow-writes")
 	fmt.Println("  gts gtsdiff --before-cache before.json --after-cache after.json")
 	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --engine go --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
@@ -1770,22 +1771,27 @@ func runMCP(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-root":   true,
-		"--root":  true,
-		"-cache":  true,
-		"--cache": true,
+		"-root":          true,
+		"--root":         true,
+		"-cache":         true,
+		"--cache":        true,
+		"-allow-writes":  false,
+		"--allow-writes": false,
 	})
 
 	root := flags.String("root", ".", "default root path for tool calls")
 	cachePath := flags.String("cache", "", "default cache path for tool calls")
+	allowWrites := flags.Bool("allow-writes", false, "allow MCP tools to mutate files (e.g. gts_refactor write mode)")
 	if err := flags.Parse(args); err != nil {
 		return err
 	}
 	if flags.NArg() > 0 {
-		return errors.New("usage: gtsmcp [--root .] [--cache .gts/index.json]")
+		return errors.New("usage: gtsmcp [--root .] [--cache .gts/index.json] [--allow-writes]")
 	}
 
-	service := mcp.NewService(*root, *cachePath)
+	service := mcp.NewServiceWithOptions(*root, *cachePath, mcp.ServiceOptions{
+		AllowWrites: *allowWrites,
+	})
 	return mcp.RunStdio(service, os.Stdin, os.Stdout, os.Stderr)
 }
 

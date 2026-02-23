@@ -290,7 +290,17 @@ func B() {}
 		t.Fatalf("WriteFile after source failed: %v", err)
 	}
 
-	service := NewService(refactorDir, "")
+	readOnlyService := NewService(refactorDir, "")
+	if _, err := readOnlyService.Call("gts_refactor", map[string]any{
+		"selector":  "function_definition[name=/^OldName$/]",
+		"new_name":  "NewName",
+		"callsites": true,
+		"write":     true,
+	}); err == nil {
+		t.Fatalf("expected write refactor to fail when writes are disabled")
+	}
+
+	service := NewServiceWithOptions(refactorDir, "", ServiceOptions{AllowWrites: true})
 	refactorRaw, err := service.Call("gts_refactor", map[string]any{
 		"selector":  "function_definition[name=/^OldName$/]",
 		"new_name":  "NewName",

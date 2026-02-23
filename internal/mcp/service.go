@@ -33,9 +33,18 @@ type Tool struct {
 type Service struct {
 	defaultRoot  string
 	defaultCache string
+	allowWrites  bool
+}
+
+type ServiceOptions struct {
+	AllowWrites bool
 }
 
 func NewService(defaultRoot, defaultCache string) *Service {
+	return NewServiceWithOptions(defaultRoot, defaultCache, ServiceOptions{})
+}
+
+func NewServiceWithOptions(defaultRoot, defaultCache string, opts ServiceOptions) *Service {
 	root := strings.TrimSpace(defaultRoot)
 	if root == "" {
 		root = "."
@@ -43,6 +52,7 @@ func NewService(defaultRoot, defaultCache string) *Service {
 	return &Service{
 		defaultRoot:  root,
 		defaultCache: strings.TrimSpace(defaultCache),
+		allowWrites:  opts.AllowWrites,
 	}
 }
 
@@ -791,6 +801,9 @@ func (s *Service) callRefactor(args map[string]any) (any, error) {
 	updateCallsites := boolArg(args, "callsites", false)
 	crossPackage := boolArg(args, "cross_package", false)
 	writeChanges := boolArg(args, "write", false)
+	if writeChanges && !s.allowWrites {
+		return nil, fmt.Errorf("write operations are disabled for this MCP server")
+	}
 	if crossPackage && !updateCallsites {
 		return nil, fmt.Errorf("cross_package requires callsites=true")
 	}

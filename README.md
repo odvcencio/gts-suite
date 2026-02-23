@@ -43,6 +43,7 @@ go run ./cmd/gts gtscallgraph main . --depth 2
 go run ./cmd/gts gtsdead . --kind callable
 go run ./cmd/gts gtsquery '(function_declaration (identifier) @name)' . --count
 go run ./cmd/gts gtsmcp --root .
+go run ./cmd/gts gtsmcp --root . --allow-writes
 go run ./cmd/gts gtsgrep 'method_definition[receiver=/Service/,signature=/Serve/]' --cache .gts/index.json --count
 go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --json
 go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
@@ -103,6 +104,7 @@ Supported kinds in this version:
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
 - MCP server (`gtsmcp`) exposes `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`, `gts_callgraph`, `gts_dead`, `gts_chunk`, `gts_lint`, `gts_refactor`, and `gts_diff` via stdio JSON-RPC.
+- MCP write operations are disabled by default; enable explicitly with `--allow-writes` for mutating tools.
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
@@ -127,4 +129,4 @@ Supported kinds in this version:
   - Next: improve diff/edit application for more append/EOF cases and add persistent warm watch-state hydration.
 - Phase 6 in progress:
   - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for query/refs/context/scope/deps/callgraph/dead/chunk/lint/refactor/diff.
-  - Next: improve MCP schemas, add richer diagnostics, and tighten tool-level permission controls.
+  - Next: improve MCP schemas and add richer diagnostics/streaming.
