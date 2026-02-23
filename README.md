@@ -29,7 +29,7 @@ This cut includes generic tree-sitter parsing for languages that ship a `TagsQue
 ```bash
 go run ./cmd/gts gtsindex . --out .gts/index.json
 go run ./cmd/gts gtsindex . --out .gts/index.json --once-if-changed
-go run ./cmd/gts gtsindex . --incremental --watch --interval 2s --out .gts/index.json
+go run ./cmd/gts gtsindex . --incremental --watch --subfile-incremental --interval 2s --out .gts/index.json
 go run ./cmd/gts gtsindex . --incremental --watch --poll --interval 2s --out .gts/index.json
 go run ./cmd/gts gtsmap --cache .gts/index.json --json
 go run ./cmd/gts gtsfiles . --sort symbols --top 20
@@ -90,6 +90,7 @@ Supported kinds in this version:
 - Cache format: JSON (`.gts/index.json` by default).
 - Incremental cache reuse based on file size + mtime metadata.
 - Event-driven watch mode via `fsnotify` with polling fallback (`--poll` to force polling).
+- Watch mode supports changed-file updates with optional sub-file incremental parsing (`--subfile-incremental`).
 - Change reporting and CI exit signaling via `--report-changes` and `--once-if-changed`.
 - Deterministic ordering for files and matches.
 - File discovery (`gtsfiles`) supports language/symbol filters and density-based sorting.
@@ -118,7 +119,8 @@ Supported kinds in this version:
 - Phase 4 in progress:
   - Shipped: `gtslint --pattern path.scm` for query-file-based structural lint rules.
   - Next: add a built-in starter query pattern pack and richer pattern metadata.
-- Phase 5 pending:
-  - Implement sub-file incremental watch updates via `Tree.Edit()` + incremental parse reuse.
+- Phase 5 in progress:
+  - Shipped: changed-file watch updates now run through incremental watch apply and maintain per-file parse trees.
+  - Next: improve diff/edit application for more append/EOF cases and add persistent warm watch-state hydration.
 - Phase 6 pending:
   - Add MCP server exposing `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, and `gts_deps`.

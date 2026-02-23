@@ -143,7 +143,7 @@ func newCLI() *cli {
 			ID:      "gtsindex",
 			Aliases: []string{"index"},
 			Summary: "Build a structural index and optionally cache it",
-			Usage:   "gtsindex [path] [--out .gts/index.json] [--incremental] [--watch] [--poll] [--interval 2s] [--report-changes] [--once-if-changed] [--json]",
+			Usage:   "gtsindex [path] [--out .gts/index.json] [--incremental] [--watch] [--subfile-incremental] [--poll] [--interval 2s] [--report-changes] [--once-if-changed] [--json]",
 			Run:     runIndex,
 		},
 		{
@@ -348,7 +348,7 @@ func (c *cli) printHelp() {
 	fmt.Println("Examples:")
 	fmt.Println("  gts gtsindex . --out .gts/index.json")
 	fmt.Println("  gts gtsindex . --out .gts/index.json --once-if-changed")
-	fmt.Println("  gts gtsindex . --watch --interval 2s")
+	fmt.Println("  gts gtsindex . --watch --subfile-incremental --interval 2s")
 	fmt.Println("  gts gtsmap . --json")
 	fmt.Println("  gts gtsfiles . --sort symbols --top 20")
 	fmt.Println("  gts gtsstats . --top 15")
@@ -389,28 +389,31 @@ func runIndex(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-out":              true,
-		"--out":             true,
-		"-json":             false,
-		"--json":            false,
-		"-incremental":      false,
-		"--incremental":     false,
-		"-watch":            false,
-		"--watch":           false,
-		"-poll":             false,
-		"--poll":            false,
-		"-report-changes":   false,
-		"--report-changes":  false,
-		"-once-if-changed":  false,
-		"--once-if-changed": false,
-		"-interval":         true,
-		"--interval":        true,
+		"-out":                  true,
+		"--out":                 true,
+		"-json":                 false,
+		"--json":                false,
+		"-incremental":          false,
+		"--incremental":         false,
+		"-watch":                false,
+		"--watch":               false,
+		"-subfile-incremental":  false,
+		"--subfile-incremental": false,
+		"-poll":                 false,
+		"--poll":                false,
+		"-report-changes":       false,
+		"--report-changes":      false,
+		"-once-if-changed":      false,
+		"--once-if-changed":     false,
+		"-interval":             true,
+		"--interval":            true,
 	})
 
 	outPath := flags.String("out", ".gts/index.json", "output path for index cache")
 	jsonOutput := flags.Bool("json", false, "emit index JSON to stdout")
 	incremental := flags.Bool("incremental", true, "reuse unchanged files from previous index cache")
 	watch := flags.Bool("watch", false, "watch for structural changes and rebuild continuously")
+	subfileIncremental := flags.Bool("subfile-incremental", true, "reuse per-file parse trees for sub-file incremental updates in watch mode")
 	poll := flags.Bool("poll", false, "force polling watch mode instead of fsnotify")
 	reportChanges := flags.Bool("report-changes", false, "print grouped structural change summary against previous cache")
 	onceIfChanged := flags.Bool("once-if-changed", false, "exit with code 2 when structural changes are detected")
@@ -519,18 +522,35 @@ func runIndex(args []string) error {
 		return nil
 	}
 
-	fmt.Printf("watching: interval=%s target=%s\n", interval.String(), target)
+	fmt.Printf("watching: interval=%s target=%s subfile-incremental=%t\n", interval.String(), target, *subfileIncremental)
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	watchState := index.NewWatchState()
+	defer watchState.Release()
 
 	current := idx
-	onChange := func() {
+	onChange := func(changedPaths []string) {
 		base := (*model.Index)(nil)
 		if *incremental {
 			base = current
 		}
 
-		next, nextStats, err := buildOnce(base)
+		var (
+			next      *model.Index
+			nextStats index.BuildStats
+			err       error
+		)
+		useSubfile := *subfileIncremental && len(changedPaths) > 0
+		if useSubfile {
+			next, nextStats, err = builder.ApplyWatchChanges(current, changedPaths, watchState, index.WatchUpdateOptions{
+				SubfileIncremental: true,
+			})
+		} else {
+			next, nextStats, err = buildOnce(base)
+			if *subfileIncremental {
+				watchState.Clear()
+			}
+		}
 		if err != nil {
 			fmt.Fprintf(os.Stderr, "watch build error: %v\n", err)
 			return
@@ -591,7 +611,7 @@ func runIndex(args []string) error {
 			fmt.Println("watch: stopped")
 			return nil
 		case <-ticker.C:
-			onChange()
+			onChange(nil)
 		}
 	}
 }
@@ -2452,7 +2472,7 @@ func summarizeChangesByFile(report structdiff.Report) []fileChangeSummary {
 	return out
 }
 
-func watchWithFSNotify(ctx context.Context, target string, debounce time.Duration, ignorePaths map[string]bool, onChange func()) error {
+func watchWithFSNotify(ctx context.Context, target string, debounce time.Duration, ignorePaths map[string]bool, onChange func(changedPaths []string)) error {
 	roots, err := watchRoots(target)
 	if err != nil {
 		return err
@@ -2482,8 +2502,12 @@ func watchWithFSNotify(ctx context.Context, target string, debounce time.Duratio
 		}
 	}
 	pending := false
+	pendingPaths := map[string]bool{}
 
-	resetDebounce := func() {
+	resetDebounce := func(path string) {
+		if path != "" {
+			pendingPaths[path] = true
+		}
 		if pending {
 			if !timer.Stop() {
 				select {
@@ -2519,11 +2543,17 @@ func watchWithFSNotify(ctx context.Context, target string, debounce time.Duratio
 			if event.Op&(fsnotify.Create|fsnotify.Write|fsnotify.Remove|fsnotify.Rename|fsnotify.Chmod) == 0 {
 				continue
 			}
-			resetDebounce()
+			resetDebounce(eventPath)
 		case <-timer.C:
 			if pending {
 				pending = false
-				onChange()
+				changed := make([]string, 0, len(pendingPaths))
+				for path := range pendingPaths {
+					changed = append(changed, path)
+				}
+				sort.Strings(changed)
+				pendingPaths = map[string]bool{}
+				onChange(changed)
 			}
 		case watchErr, ok := <-watcher.Errors:
 			if !ok {

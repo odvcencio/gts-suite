@@ -1,10 +1,12 @@
 package treesitter
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"strconv"
 	"strings"
+	"unicode/utf8"
 
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -53,25 +55,90 @@ func (p *Parser) Language() string {
 }
 
 func (p *Parser) Parse(path string, src []byte) (model.FileSummary, error) {
+	summary, tree, err := p.ParseWithTree(path, src)
+	if tree != nil {
+		tree.Release()
+	}
+	return summary, err
+}
+
+func (p *Parser) ParseWithTree(path string, src []byte) (model.FileSummary, *gotreesitter.Tree, error) {
 	summary := model.FileSummary{
 		Path:     path,
 		Language: p.Language(),
 	}
 	if len(src) == 0 {
-		return summary, nil
+		return summary, gotreesitter.NewTree(nil, src, p.lang), nil
 	}
 
 	tree := p.parseTree(src)
 	if tree == nil || tree.RootNode() == nil {
-		return summary, nil
+		return summary, tree, nil
 	}
-	defer tree.Release()
 
+	return p.buildSummaryFromTree(path, src, tree), tree, nil
+}
+
+func (p *Parser) ParseIncrementalWithTree(path string, src, oldSrc []byte, oldTree *gotreesitter.Tree) (model.FileSummary, *gotreesitter.Tree, error) {
+	summary := model.FileSummary{
+		Path:     path,
+		Language: p.Language(),
+	}
+	if len(src) == 0 {
+		return summary, gotreesitter.NewTree(nil, src, p.lang), nil
+	}
+
+	if oldTree == nil || oldTree.RootNode() == nil || len(oldSrc) == 0 {
+		return p.ParseWithTree(path, src)
+	}
+
+	if bytes.Equal(src, oldSrc) {
+		return p.buildSummaryFromTree(path, src, oldTree), oldTree, nil
+	}
+
+	if edit, ok := singleEdit(oldSrc, src); ok {
+		if edit.StartByte == uint32(len(oldSrc)) {
+			// Appends/truncations at EOF can produce unstable incremental trees
+			// with some token-source grammars; fall back to a full parse.
+			return p.ParseWithTree(path, src)
+		}
+		oldTree.Edit(edit)
+		summary, tree, err := p.parseIncrementalTree(path, src, oldTree)
+		if err != nil {
+			return model.FileSummary{}, nil, err
+		}
+		if tree == nil || tree.RootNode() == nil {
+			return p.ParseWithTree(path, src)
+		}
+		return summary, tree, nil
+	}
+
+	return p.ParseWithTree(path, src)
+}
+
+func (p *Parser) parseIncrementalTree(path string, src []byte, oldTree *gotreesitter.Tree) (model.FileSummary, *gotreesitter.Tree, error) {
+	summary := model.FileSummary{
+		Path:     path,
+		Language: p.Language(),
+	}
+
+	tree := p.parseTreeIncremental(src, oldTree)
+	if tree == nil || tree.RootNode() == nil {
+		return summary, tree, nil
+	}
+	return p.buildSummaryFromTree(path, src, tree), tree, nil
+}
+
+func (p *Parser) buildSummaryFromTree(path string, src []byte, tree *gotreesitter.Tree) model.FileSummary {
+	summary := model.FileSummary{
+		Path:     path,
+		Language: p.Language(),
+	}
 	tags := p.tagger.TagTree(tree)
 	summary.Imports = p.extractImports(tree, src)
 	summary.Symbols = p.extractSymbols(src, tags)
 	summary.References = p.extractReferences(tags)
-	return summary, nil
+	return summary
 }
 
 func (p *Parser) parseTree(src []byte) *gotreesitter.Tree {
@@ -82,6 +149,19 @@ func (p *Parser) parseTree(src []byte) *gotreesitter.Tree {
 		}
 	}
 	return p.parser.Parse(src)
+}
+
+func (p *Parser) parseTreeIncremental(src []byte, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
+	if oldTree == nil {
+		return p.parseTree(src)
+	}
+	if p.entry.TokenSourceFactory != nil {
+		ts := p.entry.TokenSourceFactory(src, p.lang)
+		if ts != nil {
+			return p.parser.ParseIncrementalWithTokenSource(src, oldTree, ts)
+		}
+	}
+	return p.parser.ParseIncremental(src, oldTree)
 }
 
 func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {
@@ -332,4 +412,51 @@ func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, sr
 		}
 	}
 	return ""
+}
+
+func singleEdit(oldSrc, newSrc []byte) (gotreesitter.InputEdit, bool) {
+	if bytes.Equal(oldSrc, newSrc) {
+		return gotreesitter.InputEdit{}, false
+	}
+
+	start := 0
+	maxPrefix := len(oldSrc)
+	if len(newSrc) < maxPrefix {
+		maxPrefix = len(newSrc)
+	}
+	for start < maxPrefix && oldSrc[start] == newSrc[start] {
+		start++
+	}
+
+	oldEnd := len(oldSrc)
+	newEnd := len(newSrc)
+	for oldEnd > start && newEnd > start && oldSrc[oldEnd-1] == newSrc[newEnd-1] {
+		oldEnd--
+		newEnd--
+	}
+
+	return gotreesitter.InputEdit{
+		StartByte:   uint32(start),
+		OldEndByte:  uint32(oldEnd),
+		NewEndByte:  uint32(newEnd),
+		StartPoint:  pointAtOffset(oldSrc, start),
+		OldEndPoint: pointAtOffset(oldSrc, oldEnd),
+		NewEndPoint: pointAtOffset(newSrc, newEnd),
+	}, true
+}
+
+func pointAtOffset(src []byte, offset int) gotreesitter.Point {
+	var row uint32
+	var col uint32
+	for i := 0; i < offset && i < len(src); {
+		r, size := utf8.DecodeRune(src[i:])
+		if r == '\n' {
+			row++
+			col = 0
+		} else {
+			col++
+		}
+		i += size
+	}
+	return gotreesitter.Point{Row: row, Column: col}
 }

@@ -353,6 +353,10 @@ func (b *Builder) parserForPath(path string) (lang.Parser, bool) {
 	return parser, ok
 }
 
+func (b *Builder) ParserForPath(path string) (lang.Parser, bool) {
+	return b.parserForPath(path)
+}
+
 func (b *Builder) collectCandidates(root string) ([]sourceCandidate, error) {
 	if strings.TrimSpace(root) == "" {
 		return nil, errors.New("root path is empty")
