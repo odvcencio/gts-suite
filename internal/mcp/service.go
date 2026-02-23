@@ -17,7 +17,10 @@ import (
 	"gts-suite/internal/index"
 	"gts-suite/internal/lint"
 	"gts-suite/internal/model"
+	"gts-suite/internal/query"
+	"gts-suite/internal/refactor"
 	gtsscope "gts-suite/internal/scope"
+	"gts-suite/internal/structdiff"
 	"gts-suite/internal/xref"
 )
 
@@ -181,6 +184,37 @@ func (s *Service) Tools() []Tool {
 				},
 			},
 		},
+		{
+			Name:        "gts_refactor",
+			Description: "Apply structural declaration renames (dry-run by default)",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"selector":      map[string]any{"type": "string"},
+					"new_name":      map[string]any{"type": "string"},
+					"path":          map[string]any{"type": "string"},
+					"cache":         map[string]any{"type": "string"},
+					"engine":        map[string]any{"type": "string"},
+					"callsites":     map[string]any{"type": "boolean"},
+					"cross_package": map[string]any{"type": "boolean"},
+					"write":         map[string]any{"type": "boolean"},
+				},
+				"required": []string{"selector", "new_name"},
+			},
+		},
+		{
+			Name:        "gts_diff",
+			Description: "Structural diff between two snapshots (path or cache sources)",
+			InputSchema: map[string]any{
+				"type": "object",
+				"properties": map[string]any{
+					"before_path":  map[string]any{"type": "string"},
+					"before_cache": map[string]any{"type": "string"},
+					"after_path":   map[string]any{"type": "string"},
+					"after_cache":  map[string]any{"type": "string"},
+				},
+			},
+		},
 	}
 }
 
@@ -204,6 +238,10 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callChunk(args)
 	case "gts_lint":
 		return s.callLint(args)
+	case "gts_refactor":
+		return s.callRefactor(args)
+	case "gts_diff":
+		return s.callDiff(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
@@ -740,12 +778,92 @@ func (s *Service) callLint(args map[string]any) (any, error) {
 	}, nil
 }
 
+func (s *Service) callRefactor(args map[string]any) (any, error) {
+	selectorRaw, err := requiredStringArg(args, "selector")
+	if err != nil {
+		return nil, err
+	}
+	newName, err := requiredStringArg(args, "new_name")
+	if err != nil {
+		return nil, err
+	}
+	engine := s.stringArgOrDefault(args, "engine", "go")
+	updateCallsites := boolArg(args, "callsites", false)
+	crossPackage := boolArg(args, "cross_package", false)
+	writeChanges := boolArg(args, "write", false)
+	if crossPackage && !updateCallsites {
+		return nil, fmt.Errorf("cross_package requires callsites=true")
+	}
+
+	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
+	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	idx, err := s.loadOrBuild(cachePath, target)
+	if err != nil {
+		return nil, err
+	}
+
+	selector, err := query.ParseSelector(selectorRaw)
+	if err != nil {
+		return nil, err
+	}
+	report, err := refactor.RenameDeclarations(idx, selector, newName, refactor.Options{
+		Write:                 writeChanges,
+		UpdateCallsites:       updateCallsites,
+		CrossPackageCallsites: crossPackage,
+		Engine:                engine,
+	})
+	if err != nil {
+		return nil, err
+	}
+	return report, nil
+}
+
+func (s *Service) callDiff(args map[string]any) (any, error) {
+	beforePath := stringArg(args, "before_path")
+	beforeCache := stringArg(args, "before_cache")
+	afterPath := stringArg(args, "after_path")
+	afterCache := stringArg(args, "after_cache")
+
+	if beforePath == "" && beforeCache == "" {
+		return nil, fmt.Errorf("missing before source: set before_path or before_cache")
+	}
+	if afterPath == "" && afterCache == "" {
+		return nil, fmt.Errorf("missing after source: set after_path or after_cache")
+	}
+
+	beforeIndex, err := s.loadIndexFromSource(beforePath, beforeCache)
+	if err != nil {
+		return nil, fmt.Errorf("load before source: %w", err)
+	}
+	afterIndex, err := s.loadIndexFromSource(afterPath, afterCache)
+	if err != nil {
+		return nil, fmt.Errorf("load after source: %w", err)
+	}
+
+	report := structdiff.Compare(beforeIndex, afterIndex)
+	return report, nil
+}
+
 func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, error) {
 	if strings.TrimSpace(cachePath) != "" {
 		return index.Load(cachePath)
 	}
 
 	if strings.TrimSpace(target) == "" {
+		target = s.defaultRoot
+	}
+	builder := index.NewBuilder()
+	return builder.BuildPath(target)
+}
+
+func (s *Service) loadIndexFromSource(pathArg, cacheArg string) (*model.Index, error) {
+	cachePath := strings.TrimSpace(cacheArg)
+	if cachePath != "" {
+		return index.Load(cachePath)
+	}
+
+	target := strings.TrimSpace(pathArg)
+	if target == "" {
 		target = s.defaultRoot
 	}
 	builder := index.NewBuilder()

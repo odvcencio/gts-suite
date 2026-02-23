@@ -3,11 +3,14 @@ package mcp
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"gts-suite/internal/chunk"
 	"gts-suite/internal/contextpack"
 	"gts-suite/internal/deps"
+	"gts-suite/internal/refactor"
+	"gts-suite/internal/structdiff"
 	"gts-suite/internal/xref"
 )
 
@@ -22,7 +25,7 @@ func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {
 	for _, tool := range tools {
 		seen[tool.Name] = true
 	}
-	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint"} {
+	for _, name := range []string{"gts_query", "gts_refs", "gts_context", "gts_scope", "gts_deps", "gts_callgraph", "gts_dead", "gts_chunk", "gts_lint", "gts_refactor", "gts_diff"} {
 		if !seen[name] {
 			t.Fatalf("expected tool %q to be present", name)
 		}
@@ -240,5 +243,90 @@ func Empty() {}
 	}
 	if count == 0 {
 		t.Fatalf("expected lint violations > 0")
+	}
+}
+
+func TestServiceRefactorAndDiff(t *testing.T) {
+	tmpDir := t.TempDir()
+	refactorDir := filepath.Join(tmpDir, "refactor")
+	beforeDir := filepath.Join(tmpDir, "before")
+	afterDir := filepath.Join(tmpDir, "after")
+	if err := os.MkdirAll(refactorDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll refactorDir failed: %v", err)
+	}
+	if err := os.MkdirAll(beforeDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll beforeDir failed: %v", err)
+	}
+	if err := os.MkdirAll(afterDir, 0o755); err != nil {
+		t.Fatalf("MkdirAll afterDir failed: %v", err)
+	}
+
+	refactorSourcePath := filepath.Join(refactorDir, "main.go")
+	refactorSource := `package sample
+
+func OldName() {}
+
+func Use() {
+	OldName()
+}
+`
+	if err := os.WriteFile(refactorSourcePath, []byte(refactorSource), 0o644); err != nil {
+		t.Fatalf("WriteFile refactor source failed: %v", err)
+	}
+
+	beforeSource := `package sample
+
+func A() {}
+`
+	afterSource := `package sample
+
+func A() {}
+func B() {}
+`
+	if err := os.WriteFile(filepath.Join(beforeDir, "main.go"), []byte(beforeSource), 0o644); err != nil {
+		t.Fatalf("WriteFile before source failed: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(afterDir, "main.go"), []byte(afterSource), 0o644); err != nil {
+		t.Fatalf("WriteFile after source failed: %v", err)
+	}
+
+	service := NewService(refactorDir, "")
+	refactorRaw, err := service.Call("gts_refactor", map[string]any{
+		"selector":  "function_definition[name=/^OldName$/]",
+		"new_name":  "NewName",
+		"callsites": true,
+		"write":     true,
+	})
+	if err != nil {
+		t.Fatalf("gts_refactor call failed: %v", err)
+	}
+	refactorReport, ok := refactorRaw.(refactor.Report)
+	if !ok {
+		t.Fatalf("expected refactor.Report, got %T", refactorRaw)
+	}
+	if refactorReport.AppliedEdits == 0 {
+		t.Fatalf("expected applied refactor edits, got report %+v", refactorReport)
+	}
+	updatedSource, err := os.ReadFile(refactorSourcePath)
+	if err != nil {
+		t.Fatalf("ReadFile refactor source failed: %v", err)
+	}
+	if !strings.Contains(string(updatedSource), "NewName()") {
+		t.Fatalf("expected refactor output to contain NewName(), got:\n%s", string(updatedSource))
+	}
+
+	diffRaw, err := service.Call("gts_diff", map[string]any{
+		"before_path": beforeDir,
+		"after_path":  afterDir,
+	})
+	if err != nil {
+		t.Fatalf("gts_diff call failed: %v", err)
+	}
+	diffReport, ok := diffRaw.(structdiff.Report)
+	if !ok {
+		t.Fatalf("expected structdiff.Report, got %T", diffRaw)
+	}
+	if diffReport.Stats.AddedSymbols == 0 {
+		t.Fatalf("expected added symbols in diff report, got %+v", diffReport.Stats)
 	}
 }
