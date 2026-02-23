@@ -1,6 +1,8 @@
 package lint
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"gts-suite/internal/model"
@@ -100,5 +102,75 @@ func TestEvaluate_NoImportViolation(t *testing.T) {
 	}
 	if violations[0].Kind != "import" || violations[0].Name != "fmt" {
 		t.Fatalf("unexpected violation: %+v", violations[0])
+	}
+}
+
+func TestLoadQueryPatternMetadata(t *testing.T) {
+	tmpDir := t.TempDir()
+	patternPath := filepath.Join(tmpDir, "rule.scm")
+	content := `; id: no-empty-functions
+; message: avoid empty function bodies
+(function_declaration (block) @violation)
+`
+	if err := os.WriteFile(patternPath, []byte(content), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	pattern, err := LoadQueryPattern(patternPath)
+	if err != nil {
+		t.Fatalf("LoadQueryPattern returned error: %v", err)
+	}
+	if pattern.ID != "no-empty-functions" {
+		t.Fatalf("unexpected pattern id %q", pattern.ID)
+	}
+	if pattern.Message != "avoid empty function bodies" {
+		t.Fatalf("unexpected pattern message %q", pattern.Message)
+	}
+}
+
+func TestEvaluatePatterns(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func Empty() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile source failed: %v", err)
+	}
+
+	patternPath := filepath.Join(tmpDir, "empty.scm")
+	patternBody := `(function_declaration (block) @violation)`
+	if err := os.WriteFile(patternPath, []byte(patternBody), 0o644); err != nil {
+		t.Fatalf("WriteFile pattern failed: %v", err)
+	}
+
+	pattern, err := LoadQueryPattern(patternPath)
+	if err != nil {
+		t.Fatalf("LoadQueryPattern returned error: %v", err)
+	}
+
+	idx := &model.Index{
+		Root: tmpDir,
+		Files: []model.FileSummary{
+			{
+				Path:     "main.go",
+				Language: "go",
+			},
+		},
+	}
+
+	violations, err := EvaluatePatterns(idx, []QueryPattern{pattern})
+	if err != nil {
+		t.Fatalf("EvaluatePatterns returned error: %v", err)
+	}
+	if len(violations) != 1 {
+		t.Fatalf("expected 1 violation, got %d", len(violations))
+	}
+	if violations[0].RuleID != pattern.ID {
+		t.Fatalf("unexpected rule id %q", violations[0].RuleID)
+	}
+	if violations[0].Kind != "query_pattern" {
+		t.Fatalf("unexpected violation kind %q", violations[0].Kind)
 	}
 }

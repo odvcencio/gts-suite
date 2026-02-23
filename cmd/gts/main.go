@@ -33,6 +33,7 @@ import (
 	gtsscope "gts-suite/internal/scope"
 	"gts-suite/internal/stats"
 	"gts-suite/internal/structdiff"
+	"gts-suite/internal/xref"
 )
 
 func main() {
@@ -81,6 +82,18 @@ type queryCaptureMatch struct {
 type queryLanguageError struct {
 	Language string `json:"language"`
 	Error    string `json:"error"`
+}
+
+type deadMatch struct {
+	File      string `json:"file"`
+	Package   string `json:"package"`
+	Kind      string `json:"kind"`
+	Name      string `json:"name"`
+	Signature string `json:"signature,omitempty"`
+	StartLine int    `json:"start_line"`
+	EndLine   int    `json:"end_line"`
+	Incoming  int    `json:"incoming"`
+	Outgoing  int    `json:"outgoing"`
 }
 
 type exitCodeError struct {
@@ -183,6 +196,20 @@ func newCLI() *cli {
 			Run:     runRefs,
 		},
 		{
+			ID:      "gtscallgraph",
+			Aliases: []string{"callgraph"},
+			Summary: "Build call graph edges rooted at matching callable definitions",
+			Usage:   "gtscallgraph <name|regex> [path] [--cache .gts/index.json] [--regex] [--depth N] [--reverse] [--count] [--json]",
+			Run:     runCallgraph,
+		},
+		{
+			ID:      "gtsdead",
+			Aliases: []string{"dead"},
+			Summary: "List callable definitions with zero incoming call references",
+			Usage:   "gtsdead [path] [--cache .gts/index.json] [--kind callable|function|method] [--include-entrypoints] [--include-tests] [--count] [--json]",
+			Run:     runDead,
+		},
+		{
 			ID:      "gtsquery",
 			Aliases: []string{"query"},
 			Summary: "Run raw tree-sitter S-expression queries across files",
@@ -221,14 +248,14 @@ func newCLI() *cli {
 			ID:      "gtscontext",
 			Aliases: []string{"context"},
 			Summary: "Pack focused code context for a file and line",
-			Usage:   "gtscontext <file> [--line N] [--tokens N] [--root .] [--cache file] [--json]",
+			Usage:   "gtscontext <file> [--line N] [--tokens N] [--semantic] [--root .] [--cache file] [--json]",
 			Run:     runContext,
 		},
 		{
 			ID:      "gtslint",
 			Aliases: []string{"lint"},
 			Summary: "Run structural lint rules against indexed symbols",
-			Usage:   "gtslint [path] [--cache .gts/index.json] --rule 'no function longer than 50 lines' [--rule ...] [--fail-on-violations] [--json]",
+			Usage:   "gtslint [path] [--cache .gts/index.json] [--rule ...] [--pattern rule.scm ...] [--fail-on-violations] [--json]",
 			Run:     runLint,
 		},
 	}
@@ -329,13 +356,16 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtsbridge . --focus internal/query --depth 2 --reverse")
 	fmt.Println("  gts gtsgrep 'function_definition[name=/^Test/]' .")
 	fmt.Println("  gts gtsrefs OldName .")
+	fmt.Println("  gts gtscallgraph main . --depth 2")
+	fmt.Println("  gts gtsdead . --kind callable")
 	fmt.Println("  gts gtsquery '(function_declaration (identifier) @name)' .")
 	fmt.Println("  gts gtsdiff --before-cache before.json --after-cache after.json")
 	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --engine go --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
 	fmt.Println("  gts gtsscope cmd/gts/main.go --line 300")
-	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600")
+	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic")
 	fmt.Println("  gts gtslint . --rule 'no function longer than 50 lines'")
+	fmt.Println("  gts gtslint . --pattern ./rules/no-empty-func.scm")
 	fmt.Println("  gts help gtsgrep")
 }
 
@@ -1215,6 +1245,275 @@ func runRefs(args []string) error {
 	return nil
 }
 
+func runCallgraph(args []string) error {
+	flags := flag.NewFlagSet("gtscallgraph", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	args = normalizeFlagArgs(args, map[string]bool{
+		"-cache":    true,
+		"--cache":   true,
+		"-regex":    false,
+		"--regex":   false,
+		"-depth":    true,
+		"--depth":   true,
+		"-reverse":  false,
+		"--reverse": false,
+		"-json":     false,
+		"--json":    false,
+		"-count":    false,
+		"--count":   false,
+	})
+
+	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
+	regexMode := flags.Bool("regex", false, "treat the first argument as a regular expression")
+	depth := flags.Int("depth", 2, "call graph traversal depth")
+	reverse := flags.Bool("reverse", false, "walk incoming callers instead of outgoing callees")
+	jsonOutput := flags.Bool("json", false, "emit JSON output")
+	countOnly := flags.Bool("count", false, "print the number of traversed edges")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() < 1 || flags.NArg() > 2 {
+		return errors.New("usage: gtscallgraph <name|regex> [path]")
+	}
+	if *depth <= 0 {
+		return fmt.Errorf("depth must be > 0")
+	}
+
+	target := "."
+	if flags.NArg() == 2 {
+		target = flags.Arg(1)
+	}
+
+	idx, err := loadOrBuild(*cachePath, target)
+	if err != nil {
+		return err
+	}
+
+	graph, err := xref.Build(idx)
+	if err != nil {
+		return err
+	}
+
+	roots, err := graph.FindDefinitions(flags.Arg(0), *regexMode)
+	if err != nil {
+		return err
+	}
+	rootIDs := make([]string, 0, len(roots))
+	for _, root := range roots {
+		rootIDs = append(rootIDs, root.ID)
+	}
+	walk := graph.Walk(rootIDs, *depth, *reverse)
+
+	if *jsonOutput {
+		if *countOnly {
+			return emitJSON(struct {
+				RootCount      int `json:"root_count"`
+				NodeCount      int `json:"node_count"`
+				EdgeCount      int `json:"edge_count"`
+				UnresolvedCall int `json:"unresolved_call_count"`
+			}{
+				RootCount:      len(walk.Roots),
+				NodeCount:      len(walk.Nodes),
+				EdgeCount:      len(walk.Edges),
+				UnresolvedCall: len(graph.Unresolved),
+			})
+		}
+		return emitJSON(struct {
+			Roots               []xref.Definition `json:"roots,omitempty"`
+			Nodes               []xref.Definition `json:"nodes,omitempty"`
+			Edges               []xref.Edge       `json:"edges,omitempty"`
+			Depth               int               `json:"depth"`
+			Reverse             bool              `json:"reverse"`
+			UnresolvedCallCount int               `json:"unresolved_call_count"`
+		}{
+			Roots:               walk.Roots,
+			Nodes:               walk.Nodes,
+			Edges:               walk.Edges,
+			Depth:               walk.Depth,
+			Reverse:             walk.Reverse,
+			UnresolvedCallCount: len(graph.Unresolved),
+		})
+	}
+
+	if *countOnly {
+		fmt.Println(len(walk.Edges))
+		return nil
+	}
+
+	fmt.Printf(
+		"callgraph: roots=%d nodes=%d edges=%d depth=%d reverse=%t unresolved=%d\n",
+		len(walk.Roots),
+		len(walk.Nodes),
+		len(walk.Edges),
+		walk.Depth,
+		walk.Reverse,
+		len(graph.Unresolved),
+	)
+	for _, root := range walk.Roots {
+		fmt.Printf("root: %s:%d %s %s\n", root.File, root.StartLine, root.Kind, definitionLabel(root))
+	}
+	for _, edge := range walk.Edges {
+		fmt.Printf(
+			"%s:%d %s -> %s:%d %s count=%d resolution=%s\n",
+			edge.Caller.File,
+			edge.Caller.StartLine,
+			definitionLabel(edge.Caller),
+			edge.Callee.File,
+			edge.Callee.StartLine,
+			definitionLabel(edge.Callee),
+			edge.Count,
+			edge.Resolution,
+		)
+	}
+	return nil
+}
+
+func runDead(args []string) error {
+	flags := flag.NewFlagSet("gtsdead", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	args = normalizeFlagArgs(args, map[string]bool{
+		"-cache":                true,
+		"--cache":               true,
+		"-kind":                 true,
+		"--kind":                true,
+		"-include-entrypoints":  false,
+		"--include-entrypoints": false,
+		"-include-tests":        false,
+		"--include-tests":       false,
+		"-json":                 false,
+		"--json":                false,
+		"-count":                false,
+		"--count":               false,
+	})
+
+	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
+	kind := flags.String("kind", "callable", "filter dead definitions by callable|function|method")
+	includeEntrypoints := flags.Bool("include-entrypoints", false, "include main/init functions in dead code results")
+	includeTests := flags.Bool("include-tests", false, "include _test files in dead code results")
+	jsonOutput := flags.Bool("json", false, "emit JSON output")
+	countOnly := flags.Bool("count", false, "print the number of dead definitions")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() > 1 {
+		return errors.New("usage: gtsdead [path]")
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(*kind))
+	switch mode {
+	case "callable", "function", "method":
+	default:
+		return fmt.Errorf("unsupported --kind %q (expected callable|function|method)", *kind)
+	}
+
+	target := "."
+	if flags.NArg() == 1 {
+		target = flags.Arg(0)
+	}
+
+	idx, err := loadOrBuild(*cachePath, target)
+	if err != nil {
+		return err
+	}
+
+	graph, err := xref.Build(idx)
+	if err != nil {
+		return err
+	}
+
+	matches := make([]deadMatch, 0, 64)
+	scanned := 0
+	for _, definition := range graph.Definitions {
+		if !deadKindAllowed(definition, mode) {
+			continue
+		}
+		if !*includeEntrypoints && isEntrypointDefinition(definition) {
+			continue
+		}
+		if !*includeTests && isTestSourceFile(definition.File) {
+			continue
+		}
+
+		scanned++
+		incoming := graph.IncomingCount(definition.ID)
+		if incoming > 0 {
+			continue
+		}
+		matches = append(matches, deadMatch{
+			File:      definition.File,
+			Package:   definition.Package,
+			Kind:      definition.Kind,
+			Name:      definition.Name,
+			Signature: definition.Signature,
+			StartLine: definition.StartLine,
+			EndLine:   definition.EndLine,
+			Incoming:  incoming,
+			Outgoing:  graph.OutgoingCount(definition.ID),
+		})
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			if matches[i].StartLine == matches[j].StartLine {
+				return matches[i].Name < matches[j].Name
+			}
+			return matches[i].StartLine < matches[j].StartLine
+		}
+		return matches[i].File < matches[j].File
+	})
+
+	if *jsonOutput {
+		if *countOnly {
+			return emitJSON(struct {
+				Count   int `json:"count"`
+				Scanned int `json:"scanned"`
+			}{
+				Count:   len(matches),
+				Scanned: scanned,
+			})
+		}
+		return emitJSON(struct {
+			Kind    string      `json:"kind"`
+			Scanned int         `json:"scanned"`
+			Count   int         `json:"count"`
+			Matches []deadMatch `json:"matches,omitempty"`
+		}{
+			Kind:    mode,
+			Scanned: scanned,
+			Count:   len(matches),
+			Matches: matches,
+		})
+	}
+
+	if *countOnly {
+		fmt.Println(len(matches))
+		return nil
+	}
+
+	for _, match := range matches {
+		name := strings.TrimSpace(match.Signature)
+		if name == "" {
+			name = match.Name
+		}
+		fmt.Printf(
+			"%s:%d:%d %s %s incoming=%d outgoing=%d\n",
+			match.File,
+			match.StartLine,
+			match.EndLine,
+			match.Kind,
+			name,
+			match.Incoming,
+			match.Outgoing,
+		)
+	}
+	fmt.Printf("dead: kind=%s scanned=%d matches=%d\n", mode, scanned, len(matches))
+	return nil
+}
+
 func runQuery(args []string) error {
 	flags := flag.NewFlagSet("gtsquery", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -1760,22 +2059,25 @@ func runContext(args []string) error {
 	flags.SetOutput(os.Stderr)
 
 	args = normalizeFlagArgs(args, map[string]bool{
-		"-cache":   true,
-		"--cache":  true,
-		"-root":    true,
-		"--root":   true,
-		"-line":    true,
-		"--line":   true,
-		"-tokens":  true,
-		"--tokens": true,
-		"-json":    false,
-		"--json":   false,
+		"-cache":     true,
+		"--cache":    true,
+		"-root":      true,
+		"--root":     true,
+		"-line":      true,
+		"--line":     true,
+		"-tokens":    true,
+		"--tokens":   true,
+		"-semantic":  false,
+		"--semantic": false,
+		"-json":      false,
+		"--json":     false,
 	})
 
 	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
 	rootPath := flags.String("root", ".", "parse root path when cache is not provided")
 	line := flags.Int("line", 1, "cursor line (1-based)")
 	tokens := flags.Int("tokens", 800, "token budget")
+	semantic := flags.Bool("semantic", false, "pack semantic dependency context when possible")
 	jsonOutput := flags.Bool("json", false, "emit JSON output")
 
 	if err := flags.Parse(args); err != nil {
@@ -1795,6 +2097,7 @@ func runContext(args []string) error {
 		FilePath:    filePath,
 		Line:        *line,
 		TokenBudget: *tokens,
+		Semantic:    *semantic,
 	})
 	if err != nil {
 		return err
@@ -1807,6 +2110,7 @@ func runContext(args []string) error {
 	fmt.Printf("file: %s\n", report.File)
 	fmt.Printf("line: %d\n", report.Line)
 	fmt.Printf("budget: %d (estimated: %d)\n", report.TokenBudget, report.EstimatedTokens)
+	fmt.Printf("semantic: %t\n", report.Semantic)
 	if report.Focus != nil {
 		fmt.Printf("focus: %s %s [%d:%d]\n", report.Focus.Kind, symbolLabel(report.Focus.Name, report.Focus.Signature), report.Focus.StartLine, report.Focus.EndLine)
 	}
@@ -1836,6 +2140,8 @@ func runLint(args []string) error {
 		"--cache":              true,
 		"-rule":                true,
 		"--rule":               true,
+		"-pattern":             true,
+		"--pattern":            true,
 		"-fail-on-violations":  false,
 		"--fail-on-violations": false,
 		"-json":                false,
@@ -1846,7 +2152,9 @@ func runLint(args []string) error {
 	failOnViolations := flags.Bool("fail-on-violations", true, "exit non-zero when violations are found")
 	jsonOutput := flags.Bool("json", false, "emit JSON output")
 	var rawRules stringList
+	var rawPatterns stringList
 	flags.Var(&rawRules, "rule", "lint rule expression (repeatable)")
+	flags.Var(&rawPatterns, "pattern", "tree-sitter query pattern file (.scm) (repeatable)")
 
 	if err := flags.Parse(args); err != nil {
 		return err
@@ -1854,8 +2162,8 @@ func runLint(args []string) error {
 	if flags.NArg() > 1 {
 		return fmt.Errorf("gtslint accepts at most one path")
 	}
-	if len(rawRules) == 0 {
-		return errors.New("at least one --rule is required")
+	if len(rawRules) == 0 && len(rawPatterns) == 0 {
+		return errors.New("at least one --rule or --pattern is required")
 	}
 
 	target := "."
@@ -1871,6 +2179,14 @@ func runLint(args []string) error {
 		}
 		rules = append(rules, rule)
 	}
+	patterns := make([]lint.QueryPattern, 0, len(rawPatterns))
+	for _, rawPattern := range rawPatterns {
+		pattern, err := lint.LoadQueryPattern(rawPattern)
+		if err != nil {
+			return fmt.Errorf("load pattern %q: %w", rawPattern, err)
+		}
+		patterns = append(patterns, pattern)
+	}
 
 	idx, err := loadOrBuild(*cachePath, target)
 	if err != nil {
@@ -1878,14 +2194,33 @@ func runLint(args []string) error {
 	}
 
 	violations := lint.Evaluate(idx, rules)
+	patternViolations, err := lint.EvaluatePatterns(idx, patterns)
+	if err != nil {
+		return err
+	}
+	violations = append(violations, patternViolations...)
+	sort.Slice(violations, func(i, j int) bool {
+		if violations[i].File == violations[j].File {
+			if violations[i].StartLine == violations[j].StartLine {
+				if violations[i].RuleID == violations[j].RuleID {
+					return violations[i].Name < violations[j].Name
+				}
+				return violations[i].RuleID < violations[j].RuleID
+			}
+			return violations[i].StartLine < violations[j].StartLine
+		}
+		return violations[i].File < violations[j].File
+	})
 
 	if *jsonOutput {
 		return emitJSON(struct {
-			Rules      []lint.Rule      `json:"rules"`
-			Violations []lint.Violation `json:"violations,omitempty"`
-			Count      int              `json:"count"`
+			Rules      []lint.Rule         `json:"rules,omitempty"`
+			Patterns   []lint.QueryPattern `json:"patterns,omitempty"`
+			Violations []lint.Violation    `json:"violations,omitempty"`
+			Count      int                 `json:"count"`
 		}{
 			Rules:      rules,
+			Patterns:   patterns,
 			Violations: violations,
 			Count:      len(violations),
 		})
@@ -1914,7 +2249,7 @@ func runLint(args []string) error {
 			violation.Message,
 		)
 	}
-	fmt.Printf("lint: rules=%d violations=%d\n", len(rules), len(violations))
+	fmt.Printf("lint: rules=%d patterns=%d violations=%d\n", len(rules), len(patterns), len(violations))
 	if len(idx.Errors) > 0 {
 		fmt.Printf("lint: parse errors=%d (ignored)\n", len(idx.Errors))
 	}
@@ -1962,6 +2297,37 @@ func symbolLabel(name, signature string) string {
 		return signature
 	}
 	return name
+}
+
+func definitionLabel(definition xref.Definition) string {
+	if strings.TrimSpace(definition.Signature) != "" {
+		return definition.Signature
+	}
+	return definition.Name
+}
+
+func deadKindAllowed(definition xref.Definition, mode string) bool {
+	switch mode {
+	case "callable":
+		return definition.Callable
+	case "function":
+		return definition.Kind == "function_definition"
+	case "method":
+		return definition.Kind == "method_definition"
+	default:
+		return false
+	}
+}
+
+func isEntrypointDefinition(definition xref.Definition) bool {
+	if definition.Kind != "function_definition" {
+		return false
+	}
+	return definition.Name == "main" || definition.Name == "init"
+}
+
+func isTestSourceFile(path string) bool {
+	return strings.HasSuffix(strings.ToLower(strings.TrimSpace(path)), "_test.go")
 }
 
 func printIndexSummary(idx *model.Index, stats index.BuildStats, incremental bool) {

@@ -8,18 +8,21 @@ import (
 	"strings"
 
 	"gts-suite/internal/model"
+	"gts-suite/internal/xref"
 )
 
 type Options struct {
 	FilePath    string
 	Line        int
 	TokenBudget int
+	Semantic    bool
 }
 
 type Report struct {
 	File            string         `json:"file"`
 	Line            int            `json:"line"`
 	TokenBudget     int            `json:"token_budget"`
+	Semantic        bool           `json:"semantic"`
 	EstimatedTokens int            `json:"estimated_tokens"`
 	Focus           *model.Symbol  `json:"focus,omitempty"`
 	Imports         []string       `json:"imports,omitempty"`
@@ -67,6 +70,7 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		File:        fileSummary.Path,
 		Line:        opts.Line,
 		TokenBudget: opts.TokenBudget,
+		Semantic:    opts.Semantic,
 		Imports:     append([]string(nil), fileSummary.Imports...),
 	}
 
@@ -93,7 +97,12 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 	report.Snippet = snippet
 
 	remaining := opts.TokenBudget - (baseTokens + snippetTokens)
-	report.Related = pickRelatedSymbols(fileSummary.Symbols, report.Focus, remaining)
+	if opts.Semantic {
+		report.Related = pickSemanticRelatedSymbols(idx, fileSummary, report.Focus, remaining)
+	}
+	if len(report.Related) == 0 {
+		report.Related = pickRelatedSymbols(fileSummary.Symbols, report.Focus, remaining)
+	}
 
 	report.EstimatedTokens = estimateTokens(renderMetadata(report) + snippet + renderRelated(report.Related))
 	if report.EstimatedTokens > opts.TokenBudget {
@@ -245,6 +254,92 @@ func pickRelatedSymbols(symbols []model.Symbol, focus *model.Symbol, budget int)
 			break
 		}
 		trimmed = append(trimmed, symbol)
+		used += cost
+	}
+	return trimmed
+}
+
+func pickSemanticRelatedSymbols(idx *model.Index, fileSummary model.FileSummary, focus *model.Symbol, budget int) []model.Symbol {
+	if idx == nil || focus == nil || budget <= 0 {
+		return nil
+	}
+
+	graph, err := xref.Build(idx)
+	if err != nil {
+		return nil
+	}
+
+	focusID := ""
+	for _, definition := range graph.Definitions {
+		if definition.File != fileSummary.Path {
+			continue
+		}
+		if definition.Kind != focus.Kind || definition.Name != focus.Name {
+			continue
+		}
+		if definition.StartLine != focus.StartLine {
+			continue
+		}
+		focusID = definition.ID
+		break
+	}
+	if focusID == "" {
+		return nil
+	}
+
+	outgoing := graph.OutgoingEdges(focusID)
+	if len(outgoing) == 0 {
+		return nil
+	}
+
+	type scoredSymbol struct {
+		symbol model.Symbol
+		score  int
+	}
+
+	scored := make([]scoredSymbol, 0, len(outgoing))
+	seen := map[string]bool{}
+	for _, edge := range outgoing {
+		callee := edge.Callee
+		if seen[callee.ID] {
+			continue
+		}
+		seen[callee.ID] = true
+		scored = append(scored, scoredSymbol{
+			symbol: model.Symbol{
+				File:      callee.File,
+				Kind:      callee.Kind,
+				Name:      callee.Name,
+				Signature: callee.Signature,
+				Receiver:  callee.Receiver,
+				StartLine: callee.StartLine,
+				EndLine:   callee.EndLine,
+			},
+			score: edge.Count,
+		})
+	}
+
+	sort.Slice(scored, func(i, j int) bool {
+		if scored[i].score == scored[j].score {
+			if scored[i].symbol.File == scored[j].symbol.File {
+				if scored[i].symbol.StartLine == scored[j].symbol.StartLine {
+					return scored[i].symbol.Name < scored[j].symbol.Name
+				}
+				return scored[i].symbol.StartLine < scored[j].symbol.StartLine
+			}
+			return scored[i].symbol.File < scored[j].symbol.File
+		}
+		return scored[i].score > scored[j].score
+	})
+
+	trimmed := make([]model.Symbol, 0, len(scored))
+	used := 0
+	for _, item := range scored {
+		cost := estimateTokens(item.symbol.Signature) + estimateTokens(item.symbol.Name) + 4
+		if used+cost > budget {
+			break
+		}
+		trimmed = append(trimmed, item.symbol)
 		used += cost
 	}
 	return trimmed

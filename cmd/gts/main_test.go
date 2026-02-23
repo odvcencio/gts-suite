@@ -15,7 +15,7 @@ import (
 func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 	app := newCLI()
 
-	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtsquery", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
+	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtscallgraph", "gtsdead", "gtsquery", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
 		if _, ok := app.specs[id]; !ok {
 			t.Fatalf("missing command spec for %q", id)
 		}
@@ -25,21 +25,23 @@ func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 	}
 
 	for alias, id := range map[string]string{
-		"index":    "gtsindex",
-		"map":      "gtsmap",
-		"files":    "gtsfiles",
-		"stats":    "gtsstats",
-		"deps":     "gtsdeps",
-		"bridge":   "gtsbridge",
-		"grep":     "gtsgrep",
-		"refs":     "gtsrefs",
-		"query":    "gtsquery",
-		"diff":     "gtsdiff",
-		"refactor": "gtsrefactor",
-		"chunk":    "gtschunk",
-		"scope":    "gtsscope",
-		"context":  "gtscontext",
-		"lint":     "gtslint",
+		"index":     "gtsindex",
+		"map":       "gtsmap",
+		"files":     "gtsfiles",
+		"stats":     "gtsstats",
+		"deps":      "gtsdeps",
+		"bridge":    "gtsbridge",
+		"grep":      "gtsgrep",
+		"refs":      "gtsrefs",
+		"callgraph": "gtscallgraph",
+		"dead":      "gtsdead",
+		"query":     "gtsquery",
+		"diff":      "gtsdiff",
+		"refactor":  "gtsrefactor",
+		"chunk":     "gtschunk",
+		"scope":     "gtsscope",
+		"context":   "gtscontext",
+		"lint":      "gtslint",
 	} {
 		if mapped, ok := app.aliasToID[alias]; !ok || mapped != id {
 			t.Fatalf("alias %q mapped to %q (ok=%v), want %q", alias, mapped, ok, id)
@@ -303,6 +305,32 @@ func A() {
 	})
 	if err == nil {
 		t.Fatal("expected lint import rule to fail with violation")
+	}
+	assertExitCode(t, err, 3)
+}
+
+func TestRunLint_QueryPatternViolation(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	patternPath := filepath.Join(tmpDir, "no-empty.scm")
+	source := `package sample
+
+func Empty() {}
+`
+	pattern := `(function_declaration (block) @violation)`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile source failed: %v", err)
+	}
+	if err := os.WriteFile(patternPath, []byte(pattern), 0o644); err != nil {
+		t.Fatalf("WriteFile pattern failed: %v", err)
+	}
+
+	err := runLint([]string{
+		tmpDir,
+		"--pattern", patternPath,
+	})
+	if err == nil {
+		t.Fatal("expected lint pattern to fail with violation")
 	}
 	assertExitCode(t, err, 3)
 }
@@ -612,6 +640,98 @@ func Use() {
 	}
 }
 
+func TestRunCallgraphCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func A() {}
+
+func main() {
+	A()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runCallgraph([]string{
+		"main",
+		tmpDir,
+		"--depth",
+		"2",
+		"--count",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runCallgraph returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	if strings.TrimSpace(output.String()) != "1" {
+		t.Fatalf("unexpected callgraph count output %q", output.String())
+	}
+}
+
+func TestRunDeadCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func Used() {}
+func Dead() {}
+
+func main() {
+	Used()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runDead([]string{
+		tmpDir,
+		"--kind",
+		"function",
+		"--count",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runDead returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	if strings.TrimSpace(output.String()) != "1" {
+		t.Fatalf("unexpected dead count output %q", output.String())
+	}
+}
+
 func TestRunQueryCount(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "main.go")
@@ -695,6 +815,55 @@ func work(input string) {
 	}
 	text := output.String()
 	for _, expected := range []string{"package: sample", "input (param)", "value (local_var)", "fmt (import)"} {
+		if !strings.Contains(text, expected) {
+			t.Fatalf("expected output to contain %q, got:\n%s", expected, text)
+		}
+	}
+}
+
+func TestRunContextSemantic(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func helper() {}
+
+func work() {
+	helper()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runContext([]string{
+		sourcePath,
+		"--root", tmpDir,
+		"--line", "6",
+		"--tokens", "400",
+		"--semantic",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runContext returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	text := output.String()
+	for _, expected := range []string{"semantic: true", "focus: function_definition func work()", "related:", "helper"} {
 		if !strings.Contains(text, expected) {
 			t.Fatalf("expected output to contain %q, got:\n%s", expected, text)
 		}

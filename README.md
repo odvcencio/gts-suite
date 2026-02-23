@@ -12,6 +12,8 @@ Bootstrap implementation of a gotreesitter-style CLI suite with shared indexing 
 - `gtsbridge`: Map cross-component dependency bridges.
 - `gtsgrep`: Query symbols using structural selectors.
 - `gtsrefs`: Query indexed call/reference occurrences by symbol name or regex.
+- `gtscallgraph`: Traverse resolved call graph edges from matching roots.
+- `gtsdead`: List callable definitions with zero incoming call references.
 - `gtsquery`: Run raw tree-sitter S-expression queries across files.
 - `gtsdiff`: Compare structural changes between two snapshots.
 - `gtsrefactor`: Apply structural declaration renames (dry-run by default).
@@ -36,15 +38,18 @@ go run ./cmd/gts gtsdeps . --by package --focus internal/query --depth 2 --rever
 go run ./cmd/gts gtsbridge . --focus internal/query --depth 2 --reverse
 go run ./cmd/gts gtsgrep 'function_definition[name=/^Test/,start>=10]' --cache .gts/index.json
 go run ./cmd/gts gtsrefs ParseConfig . --cache .gts/index.json
+go run ./cmd/gts gtscallgraph main . --depth 2
+go run ./cmd/gts gtsdead . --kind callable
 go run ./cmd/gts gtsquery '(function_declaration (identifier) @name)' . --count
 go run ./cmd/gts gtsgrep 'method_definition[receiver=/Service/,signature=/Serve/]' --cache .gts/index.json --count
 go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --json
 go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
 go run ./cmd/gts gtschunk . --tokens 500 --json
 go run ./cmd/gts gtsscope cmd/gts/main.go --line 300 --cache .gts/index.json --json
-go run ./cmd/gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --json
+go run ./cmd/gts gtscontext cmd/gts/main.go --line 120 --tokens 600 --semantic --json
 go run ./cmd/gts gtslint . --rule 'no function longer than 50 lines'
 go run ./cmd/gts gtslint . --rule 'no import fmt'
+go run ./cmd/gts gtslint . --pattern ./rules/no-empty-func.scm
 ```
 
 ## Selector syntax (`gtsgrep`)
@@ -95,36 +100,25 @@ Supported kinds in this version:
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
 - Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
 - Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
+- Call graph and dead-code primitives (`gtscallgraph`, `gtsdead`) resolve call edges from indexed references.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
 - Scope resolution (`gtsscope`) reports in-scope imports, package symbols, and local declarations for Go files.
-- Context packing returns focus symbol, imports, bounded source snippet, and related symbols.
-- Structural linting (`gtslint`) supports max-lines rules and import bans like `no import fmt`.
+- Context packing supports spatial mode and semantic mode (`gtscontext --semantic`) using outgoing call dependencies.
+- Structural linting (`gtslint`) supports built-in rules plus query-file patterns (`--pattern rule.scm`).
 - Index parsing is parallelized by default; set `GTS_INDEX_WORKERS` to tune worker count.
 - File scanning filters to parser-supported extensions during walk to reduce indexing overhead.
 
-## Next increments
+## Roadmap Status
 
-- Phase 1: `gtsquery` raw tree-sitter query engine
-  - Add a first-class command to run full S-expression queries with predicates/alternation/quantifiers.
-  - Output structured captures (file, range, capture name, node text, node type).
-  - Keep `gtsgrep` as a fast ergonomic subset, but treat `gtsquery` as the power surface.
-- Phase 2: Definition + reference index model
-  - Extend index schema to persist references (`reference.call`, etc.), not just definitions.
-  - Add `gtsrefs`, `gtscallgraph`, and `gtsdead` commands.
-  - Use references for dead code detection and impact analysis.
-- Phase 3: Semantic context packing
-  - Add `gtscontext --semantic` that follows call/type dependencies instead of line distance only.
-  - Rank/pack related symbols under token budget by dependency relevance.
-  - Keep existing spatial mode as a fallback.
-- Phase 4: Query-file linting
-  - Add lint rule loading from `.scm` query files (`--pattern path.scm`).
-  - Keep built-in rules, but allow zero-recompile custom structural rules.
-  - Ship starter pattern library (`error-must-be-checked`, `no-deep-nesting`, etc.).
-- Phase 5: Sub-file incremental watch mode
-  - Use `Tree.Edit()` + incremental parsing for changed ranges.
-  - Maintain per-file live trees in watch mode and update symbols/references incrementally.
-  - Target near-instant watch feedback on large repositories.
-- Phase 6: MCP server
-  - Expose suite capabilities as MCP tools (`gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`).
-  - Keep CLI UX for humans, but make MCP the primary integration point for AI agents.
-  - Add stable JSON contracts and versioned tool schemas.
+- Phase 1 complete: raw tree-sitter query surface (`gtsquery`) is shipped.
+- Phase 2 complete: references are indexed and exposed through `gtsrefs`, `gtscallgraph`, and `gtsdead`.
+- Phase 3 in progress:
+  - Shipped: `gtscontext --semantic` now follows direct call dependencies from the focus symbol.
+  - Next: add type dependency pulls and multi-hop relevance ranking under token budget.
+- Phase 4 in progress:
+  - Shipped: `gtslint --pattern path.scm` for query-file-based structural lint rules.
+  - Next: add a built-in starter query pattern pack and richer pattern metadata.
+- Phase 5 pending:
+  - Implement sub-file incremental watch updates via `Tree.Edit()` + incremental parse reuse.
+- Phase 6 pending:
+  - Add MCP server exposing `gts_query`, `gts_refs`, `gts_context`, `gts_scope`, and `gts_deps`.

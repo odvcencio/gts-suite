@@ -83,3 +83,80 @@ func TestBuild_RequiresFilePath(t *testing.T) {
 		t.Fatal("expected Build to fail when file path is missing")
 	}
 }
+
+func TestBuild_SemanticRelatedUsesCallGraph(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "sample.go")
+	source := `package sample
+
+func helper() {}
+
+func work() {
+	helper()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	idx := &model.Index{
+		Root: tmpDir,
+		Files: []model.FileSummary{
+			{
+				Path:    "sample.go",
+				Imports: nil,
+				Symbols: []model.Symbol{
+					{
+						File:      "sample.go",
+						Kind:      "function_definition",
+						Name:      "helper",
+						Signature: "func helper()",
+						StartLine: 3,
+						EndLine:   3,
+					},
+					{
+						File:      "sample.go",
+						Kind:      "function_definition",
+						Name:      "work",
+						Signature: "func work()",
+						StartLine: 5,
+						EndLine:   7,
+					},
+				},
+				References: []model.Reference{
+					{
+						File:        "sample.go",
+						Kind:        "reference.call",
+						Name:        "helper",
+						StartLine:   6,
+						EndLine:     6,
+						StartColumn: 2,
+						EndColumn:   8,
+					},
+				},
+			},
+		},
+	}
+
+	report, err := Build(idx, Options{
+		FilePath:    sourcePath,
+		Line:        6,
+		TokenBudget: 400,
+		Semantic:    true,
+	})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if !report.Semantic {
+		t.Fatalf("expected semantic mode to be true")
+	}
+	if report.Focus == nil || report.Focus.Name != "work" {
+		t.Fatalf("expected focus symbol work, got %#v", report.Focus)
+	}
+	if len(report.Related) == 0 {
+		t.Fatalf("expected semantic related symbols, got none")
+	}
+	if report.Related[0].Name != "helper" {
+		t.Fatalf("expected related symbol helper, got %+v", report.Related[0])
+	}
+}

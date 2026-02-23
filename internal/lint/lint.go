@@ -2,10 +2,15 @@ package lint
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 
 	"gts-suite/internal/model"
 )
@@ -21,6 +26,13 @@ type Rule struct {
 	KindLabel  string `json:"kind_label,omitempty"`
 	MaxLines   int    `json:"max_lines,omitempty"`
 	ImportPath string `json:"import_path,omitempty"`
+}
+
+type QueryPattern struct {
+	ID      string `json:"id"`
+	Path    string `json:"path"`
+	Query   string `json:"query"`
+	Message string `json:"message,omitempty"`
 }
 
 type Violation struct {
@@ -94,6 +106,52 @@ func normalizeRuleKind(kind string) (string, string, error) {
 	}
 }
 
+func LoadQueryPattern(path string) (QueryPattern, error) {
+	cleaned := strings.TrimSpace(path)
+	if cleaned == "" {
+		return QueryPattern{}, fmt.Errorf("pattern path cannot be empty")
+	}
+
+	source, err := os.ReadFile(cleaned)
+	if err != nil {
+		return QueryPattern{}, err
+	}
+
+	queryText := strings.TrimSpace(string(source))
+	if queryText == "" {
+		return QueryPattern{}, fmt.Errorf("pattern %q is empty", cleaned)
+	}
+
+	id := "query-pattern:" + filepath.ToSlash(filepath.Clean(cleaned))
+	message := ""
+	for _, line := range strings.Split(queryText, "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, ";") {
+			continue
+		}
+		meta := strings.TrimSpace(strings.TrimPrefix(trimmed, ";"))
+		switch {
+		case strings.HasPrefix(strings.ToLower(meta), "id:"):
+			value := strings.TrimSpace(meta[len("id:"):])
+			if value != "" {
+				id = value
+			}
+		case strings.HasPrefix(strings.ToLower(meta), "message:"):
+			value := strings.TrimSpace(meta[len("message:"):])
+			if value != "" {
+				message = value
+			}
+		}
+	}
+
+	return QueryPattern{
+		ID:      id,
+		Path:    filepath.ToSlash(filepath.Clean(cleaned)),
+		Query:   queryText,
+		Message: message,
+	}, nil
+}
+
 func Evaluate(idx *model.Index, rules []Rule) []Violation {
 	if idx == nil || len(rules) == 0 {
 		return nil
@@ -143,6 +201,171 @@ func Evaluate(idx *model.Index, rules []Rule) []Violation {
 		}
 	}
 
+	sortViolations(violations)
+
+	return violations
+}
+
+func EvaluatePatterns(idx *model.Index, patterns []QueryPattern) ([]Violation, error) {
+	if idx == nil || len(patterns) == 0 {
+		return nil, nil
+	}
+
+	entriesByLanguage := map[string]grammars.LangEntry{}
+	for _, entry := range grammars.AllLanguages() {
+		if strings.TrimSpace(entry.Name) == "" || entry.Language == nil {
+			continue
+		}
+		entriesByLanguage[entry.Name] = entry
+	}
+
+	langByName := map[string]*gotreesitter.Language{}
+	parserByLanguage := map[string]*gotreesitter.Parser{}
+	queryByPatternLanguage := map[string]*gotreesitter.Query{}
+	queryCompileErr := map[string]bool{}
+
+	violations := make([]Violation, 0, 32)
+	for _, file := range idx.Files {
+		entry, ok := entriesByLanguage[file.Language]
+		if !ok {
+			continue
+		}
+
+		lang, ok := langByName[file.Language]
+		if !ok {
+			lang = entry.Language()
+			if lang == nil {
+				continue
+			}
+			langByName[file.Language] = lang
+		}
+
+		sourcePath := filepath.Join(idx.Root, filepath.FromSlash(file.Path))
+		source, err := os.ReadFile(sourcePath)
+		if err != nil {
+			return nil, err
+		}
+
+		parser, ok := parserByLanguage[file.Language]
+		if !ok {
+			parser = gotreesitter.NewParser(lang)
+			parserByLanguage[file.Language] = parser
+		}
+
+		var tree *gotreesitter.Tree
+		if entry.TokenSourceFactory != nil {
+			tokenSource := entry.TokenSourceFactory(source, lang)
+			if tokenSource != nil {
+				tree = parser.ParseWithTokenSource(source, tokenSource)
+			}
+		}
+		if tree == nil {
+			tree = parser.Parse(source)
+		}
+		if tree == nil || tree.RootNode() == nil {
+			continue
+		}
+
+		for _, pattern := range patterns {
+			key := pattern.ID + "\x00" + file.Language
+			if queryCompileErr[key] {
+				continue
+			}
+
+			compiled := queryByPatternLanguage[key]
+			if compiled == nil {
+				query, err := gotreesitter.NewQuery(pattern.Query, lang)
+				if err != nil {
+					queryCompileErr[key] = true
+					continue
+				}
+				queryByPatternLanguage[key] = query
+				compiled = query
+			}
+
+			matches := compiled.Execute(tree)
+			for _, match := range matches {
+				captureName, node := pickViolationCapture(match.Captures)
+				if node == nil {
+					continue
+				}
+
+				startLine := int(node.StartPoint().Row) + 1
+				endLine := int(node.EndPoint().Row) + 1
+				if endLine < startLine {
+					endLine = startLine
+				}
+				span := endLine - startLine + 1
+				if span < 1 {
+					span = 1
+				}
+
+				message := pattern.Message
+				if strings.TrimSpace(message) == "" {
+					message = fmt.Sprintf("query pattern %q matched", pattern.Path)
+				}
+				if captureName != "" {
+					message = message + " (@" + captureName + ")"
+				}
+
+				violations = append(violations, Violation{
+					RuleID:    pattern.ID,
+					File:      file.Path,
+					Kind:      "query_pattern",
+					Name:      compactPatternText(node.Text(source)),
+					StartLine: startLine,
+					EndLine:   endLine,
+					Span:      span,
+					Message:   message,
+				})
+			}
+		}
+
+		tree.Release()
+	}
+
+	sortViolations(violations)
+	return violations, nil
+}
+
+func symbolSpan(symbol model.Symbol) int {
+	if symbol.StartLine <= 0 || symbol.EndLine < symbol.StartLine {
+		return 0
+	}
+	return symbol.EndLine - symbol.StartLine + 1
+}
+
+func pickViolationCapture(captures []gotreesitter.QueryCapture) (string, *gotreesitter.Node) {
+	if len(captures) == 0 {
+		return "", nil
+	}
+	for _, capture := range captures {
+		if capture.Node == nil {
+			continue
+		}
+		if capture.Name == "violation" {
+			return capture.Name, capture.Node
+		}
+	}
+	for _, capture := range captures {
+		if capture.Node == nil {
+			continue
+		}
+		return capture.Name, capture.Node
+	}
+	return "", nil
+}
+
+func compactPatternText(text string) string {
+	trimmed := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	const maxLen = 120
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[:maxLen] + "..."
+}
+
+func sortViolations(violations []Violation) {
 	sort.Slice(violations, func(i, j int) bool {
 		if violations[i].File == violations[j].File {
 			if violations[i].StartLine == violations[j].StartLine {
@@ -155,13 +378,4 @@ func Evaluate(idx *model.Index, rules []Rule) []Violation {
 		}
 		return violations[i].File < violations[j].File
 	})
-
-	return violations
-}
-
-func symbolSpan(symbol model.Symbol) int {
-	if symbol.StartLine <= 0 || symbol.EndLine < symbol.StartLine {
-		return 0
-	}
-	return symbol.EndLine - symbol.StartLine + 1
 }
