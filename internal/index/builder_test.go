@@ -86,6 +86,43 @@ func Main() {}
 	}
 }
 
+func TestBuildPath_Directory_InferredTagsLanguage(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	jsSource := `class Worker {
+	run() {}
+}
+
+function main() {
+	const w = new Worker()
+	w.run()
+}
+`
+	if err := os.WriteFile(filepath.Join(tmpDir, "main.js"), []byte(jsSource), 0o644); err != nil {
+		t.Fatalf("WriteFile main.js failed: %v", err)
+	}
+
+	builder := NewBuilder()
+	idx, err := builder.BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+
+	if idx.FileCount() != 1 {
+		t.Fatalf("expected 1 indexed file, got %d", idx.FileCount())
+	}
+	file := idx.Files[0]
+	if file.Path != "main.js" {
+		t.Fatalf("expected main.js, got %q", file.Path)
+	}
+	if file.Language != "javascript" {
+		t.Fatalf("expected javascript language, got %q", file.Language)
+	}
+	if len(file.Symbols) == 0 {
+		t.Fatal("expected javascript symbols from inferred tags query")
+	}
+}
+
 func TestBuildPathIncremental_ReusesUnchangedFiles(t *testing.T) {
 	tmpDir := t.TempDir()
 

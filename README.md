@@ -76,7 +76,7 @@ Supported kinds in this version:
 
 ## Current scope
 
-- Multi-language structural extraction via gotreesitter tag queries (core languages wired in this phase).
+- Multi-language structural extraction via gotreesitter tag queries (explicit core queries + inferred query fallback for additional grammars).
 - Go import extraction is preserved for dependency analysis.
 - Cache format: JSON (`.gts/index.json` by default).
 - Incremental cache reuse based on file size + mtime metadata.
