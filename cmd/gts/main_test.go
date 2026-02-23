@@ -15,7 +15,7 @@ import (
 func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 	app := newCLI()
 
-	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
+	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtsquery", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
 		if _, ok := app.specs[id]; !ok {
 			t.Fatalf("missing command spec for %q", id)
 		}
@@ -32,6 +32,8 @@ func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 		"deps":     "gtsdeps",
 		"bridge":   "gtsbridge",
 		"grep":     "gtsgrep",
+		"refs":     "gtsrefs",
+		"query":    "gtsquery",
 		"diff":     "gtsdiff",
 		"refactor": "gtsrefactor",
 		"chunk":    "gtschunk",
@@ -566,6 +568,91 @@ func B() {}
 	}
 }
 
+func TestRunRefsCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func A() {}
+
+func Use() {
+	A()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runRefs([]string{
+		"A",
+		tmpDir,
+		"--count",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runRefs returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	if strings.TrimSpace(output.String()) != "1" {
+		t.Fatalf("unexpected refs count output %q", output.String())
+	}
+}
+
+func TestRunQueryCount(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.go")
+	source := `package sample
+
+func A() {}
+func B() {}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	originalStdout := os.Stdout
+	readPipe, writePipe, err := os.Pipe()
+	if err != nil {
+		t.Fatalf("os.Pipe failed: %v", err)
+	}
+	os.Stdout = writePipe
+	defer func() {
+		os.Stdout = originalStdout
+	}()
+
+	runErr := runQuery([]string{
+		"(function_declaration (identifier) @name)",
+		tmpDir,
+		"--count",
+	})
+	_ = writePipe.Close()
+	if runErr != nil {
+		t.Fatalf("runQuery returned error: %v", runErr)
+	}
+
+	var output bytes.Buffer
+	if _, err := output.ReadFrom(readPipe); err != nil {
+		t.Fatalf("ReadFrom failed: %v", err)
+	}
+	if strings.TrimSpace(output.String()) != "2" {
+		t.Fatalf("unexpected query count output %q", output.String())
+	}
+}
+
 func TestRunScope(t *testing.T) {
 	tmpDir := t.TempDir()
 	sourcePath := filepath.Join(tmpDir, "main.go")
@@ -795,6 +882,40 @@ func Use() {
 	}
 	if !strings.Contains(string(afterApp), "lib.NewName()") {
 		t.Fatalf("expected cross-package callsite rename, got:\n%s", string(afterApp))
+	}
+}
+
+func TestRunRefactorTreeSitterEngine(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.js")
+	source := `function OldName() {}
+
+function Use() {
+	OldName()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile failed: %v", err)
+	}
+
+	if err := runRefactor([]string{
+		"function_definition[name=/^OldName$/]",
+		"NewName",
+		tmpDir,
+		"--engine",
+		"treesitter",
+		"--callsites",
+		"--write",
+	}); err != nil {
+		t.Fatalf("runRefactor treesitter write returned error: %v", err)
+	}
+
+	after, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("ReadFile main.js failed: %v", err)
+	}
+	if !strings.Contains(string(after), "function NewName()") || !strings.Contains(string(after), "NewName()") {
+		t.Fatalf("expected treesitter refactor rename, got:\n%s", string(after))
 	}
 }
 

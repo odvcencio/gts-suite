@@ -12,13 +12,24 @@ type Symbol struct {
 	EndLine   int    `json:"end_line"`
 }
 
+type Reference struct {
+	File        string `json:"file"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	StartColumn int    `json:"start_column,omitempty"`
+	EndColumn   int    `json:"end_column,omitempty"`
+}
+
 type FileSummary struct {
-	Path            string   `json:"path"`
-	Language        string   `json:"language"`
-	SizeBytes       int64    `json:"size_bytes,omitempty"`
-	ModTimeUnixNano int64    `json:"mod_time_unix_nano,omitempty"`
-	Imports         []string `json:"imports,omitempty"`
-	Symbols         []Symbol `json:"symbols,omitempty"`
+	Path            string      `json:"path"`
+	Language        string      `json:"language"`
+	SizeBytes       int64       `json:"size_bytes,omitempty"`
+	ModTimeUnixNano int64       `json:"mod_time_unix_nano,omitempty"`
+	Imports         []string    `json:"imports,omitempty"`
+	Symbols         []Symbol    `json:"symbols,omitempty"`
+	References      []Reference `json:"references,omitempty"`
 }
 
 type ParseError struct {
@@ -49,6 +60,18 @@ func (idx *Index) SymbolCount() int {
 	total := 0
 	for _, file := range idx.Files {
 		total += len(file.Symbols)
+	}
+	return total
+}
+
+func (idx *Index) ReferenceCount() int {
+	if idx == nil {
+		return 0
+	}
+
+	total := 0
+	for _, file := range idx.Files {
+		total += len(file.References)
 	}
 	return total
 }

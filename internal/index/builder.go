@@ -165,6 +165,9 @@ func (b *Builder) BuildPathIncremental(path string, previous *model.Index) (*mod
 			for i := range reused.Symbols {
 				reused.Symbols[i].File = relPath
 			}
+			for i := range reused.References {
+				reused.References[i].File = relPath
+			}
 			orderedFiles = append(orderedFiles, reused)
 			orderedValid = append(orderedValid, true)
 			stats.ReusedFiles++
@@ -272,6 +275,9 @@ func (b *Builder) parseFiles(tasks []parseTask) []parseResult {
 				summary.ModTimeUnixNano = task.ModTimeUnixNano
 				for i := range summary.Symbols {
 					summary.Symbols[i].File = task.RelPath
+				}
+				for i := range summary.References {
+					summary.References[i].File = task.RelPath
 				}
 				result.Summary = summary
 				results[idx] = result

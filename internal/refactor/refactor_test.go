@@ -267,3 +267,53 @@ func TestRenameDeclarations_InvalidIdentifier(t *testing.T) {
 		t.Fatal("expected RenameDeclarations to fail")
 	}
 }
+
+func TestRenameDeclarations_TreeSitterEngine_JavaScript(t *testing.T) {
+	tmpDir := t.TempDir()
+	sourcePath := filepath.Join(tmpDir, "main.js")
+	source := `function OldName() {}
+
+function Use() {
+	OldName()
+}
+`
+	if err := os.WriteFile(sourcePath, []byte(source), 0o644); err != nil {
+		t.Fatalf("WriteFile main.js failed: %v", err)
+	}
+
+	idx, err := index.NewBuilder().BuildPath(tmpDir)
+	if err != nil {
+		t.Fatalf("BuildPath returned error: %v", err)
+	}
+	selector, err := query.ParseSelector("function_definition[name=/^OldName$/]")
+	if err != nil {
+		t.Fatalf("ParseSelector returned error: %v", err)
+	}
+
+	report, err := RenameDeclarations(idx, selector, "NewName", Options{
+		Write:           true,
+		UpdateCallsites: true,
+		Engine:          "treesitter",
+	})
+	if err != nil {
+		t.Fatalf("RenameDeclarations returned error: %v", err)
+	}
+	if report.Engine != "treesitter" {
+		t.Fatalf("expected treesitter engine report, got %q", report.Engine)
+	}
+	if report.AppliedEdits != 2 {
+		t.Fatalf("expected declaration + callsite edits, got %+v", report)
+	}
+
+	updated, err := os.ReadFile(sourcePath)
+	if err != nil {
+		t.Fatalf("ReadFile main.js failed: %v", err)
+	}
+	text := string(updated)
+	if !strings.Contains(text, "function NewName()") {
+		t.Fatalf("expected declaration rename, got:\n%s", text)
+	}
+	if !strings.Contains(text, "NewName()") {
+		t.Fatalf("expected callsite rename, got:\n%s", text)
+	}
+}

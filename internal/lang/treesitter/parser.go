@@ -67,15 +67,19 @@ func (p *Parser) Parse(path string, src []byte) (model.FileSummary, error) {
 	}
 	defer tree.Release()
 
+	tags := p.tagger.TagTree(tree)
 	summary.Imports = p.extractImports(tree, src)
-	summary.Symbols = p.extractSymbols(src, p.tagger.TagTree(tree))
+	summary.Symbols = p.extractSymbols(src, tags)
+	summary.References = p.extractReferences(tags)
 	return summary, nil
 }
 
 func (p *Parser) parseTree(src []byte) *gotreesitter.Tree {
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
-		return p.parser.ParseWithTokenSource(src, ts)
+		if ts != nil {
+			return p.parser.ParseWithTokenSource(src, ts)
+		}
 	}
 	return p.parser.Parse(src)
 }
@@ -144,6 +148,42 @@ func (p *Parser) extractSymbols(src []byte, tags []gotreesitter.Tag) []model.Sym
 	return symbols
 }
 
+func (p *Parser) extractReferences(tags []gotreesitter.Tag) []model.Reference {
+	if len(tags) == 0 {
+		return nil
+	}
+
+	references := make([]model.Reference, 0, len(tags))
+	seen := map[string]struct{}{}
+	for _, tag := range tags {
+		reference, ok := referenceFromTag(tag)
+		if !ok {
+			continue
+		}
+
+		key := reference.Kind + "|" + reference.Name + "|" + strconv.Itoa(reference.StartLine) + "|" + strconv.Itoa(reference.StartColumn)
+		if _, exists := seen[key]; exists {
+			continue
+		}
+		seen[key] = struct{}{}
+		references = append(references, reference)
+	}
+
+	sort.Slice(references, func(i, j int) bool {
+		if references[i].StartLine == references[j].StartLine {
+			if references[i].StartColumn == references[j].StartColumn {
+				if references[i].Kind == references[j].Kind {
+					return references[i].Name < references[j].Name
+				}
+				return references[i].Kind < references[j].Kind
+			}
+			return references[i].StartColumn < references[j].StartColumn
+		}
+		return references[i].StartLine < references[j].StartLine
+	})
+	return references
+}
+
 func symbolFromTag(src []byte, tag gotreesitter.Tag) (model.Symbol, bool) {
 	kind, ok := mapTagKind(tag.Kind)
 	if !ok {
@@ -174,6 +214,37 @@ func symbolFromTag(src []byte, tag gotreesitter.Tag) (model.Symbol, bool) {
 		Receiver:  receiver,
 		StartLine: start,
 		EndLine:   end,
+	}, true
+}
+
+func referenceFromTag(tag gotreesitter.Tag) (model.Reference, bool) {
+	if !strings.HasPrefix(tag.Kind, "reference.") {
+		return model.Reference{}, false
+	}
+
+	name := strings.TrimSpace(tag.Name)
+	if name == "" {
+		return model.Reference{}, false
+	}
+
+	startLine := int(tag.NameRange.StartPoint.Row) + 1
+	endLine := int(tag.NameRange.EndPoint.Row) + 1
+	if endLine < startLine {
+		endLine = startLine
+	}
+	startCol := int(tag.NameRange.StartPoint.Column) + 1
+	endCol := int(tag.NameRange.EndPoint.Column) + 1
+	if endCol < startCol {
+		endCol = startCol
+	}
+
+	return model.Reference{
+		Kind:        tag.Kind,
+		Name:        name,
+		StartLine:   startLine,
+		EndLine:     endLine,
+		StartColumn: startCol,
+		EndColumn:   endCol,
 	}, true
 }
 

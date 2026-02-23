@@ -61,6 +61,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {}
 	if method.Receiver == "" {
 		t.Fatal("expected receiver metadata for method definition")
 	}
+	if !hasReference(summary, "reference.call", "Println") {
+		t.Fatal("expected reference.call Println")
+	}
 }
 
 func TestParsePythonSymbols(t *testing.T) {
@@ -95,6 +98,9 @@ def helper():
 	if !hasSymbol(summary, "function_definition", "helper") {
 		t.Fatal("expected function_definition helper")
 	}
+	if !hasReference(summary, "reference.call", "run") {
+		t.Fatal("expected reference.call run")
+	}
 }
 
 func hasSymbol(summary model.FileSummary, kind, name string) bool {
@@ -109,4 +115,13 @@ func findSymbol(summary model.FileSummary, kind, name string) *model.Symbol {
 		}
 	}
 	return nil
+}
+
+func hasReference(summary model.FileSummary, kind, name string) bool {
+	for _, reference := range summary.References {
+		if reference.Kind == kind && reference.Name == name {
+			return true
+		}
+	}
+	return false
 }

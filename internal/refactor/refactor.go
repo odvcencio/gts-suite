@@ -21,6 +21,7 @@ type Options struct {
 	Write                 bool
 	UpdateCallsites       bool
 	CrossPackageCallsites bool
+	Engine                string
 }
 
 type Edit struct {
@@ -41,6 +42,7 @@ type Report struct {
 	Root                  string `json:"root"`
 	Selector              string `json:"selector"`
 	NewName               string `json:"new_name"`
+	Engine                string `json:"engine"`
 	Write                 bool   `json:"write"`
 	UpdateCallsites       bool   `json:"update_callsites"`
 	CrossPackageCallsites bool   `json:"cross_package_callsites"`
@@ -61,11 +63,20 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 	if !token.IsIdentifier(newName) {
 		return Report{}, fmt.Errorf("new name %q is not a valid Go identifier", newName)
 	}
+	engine := normalizeEngine(opts.Engine)
+	if engine == "" {
+		return Report{}, fmt.Errorf("unknown refactor engine %q", opts.Engine)
+	}
+	opts.Engine = engine
+	if engine == "treesitter" {
+		return renameDeclarationsTreeSitter(idx, selector, newName, opts)
+	}
 
 	report := Report{
 		Root:                  idx.Root,
 		Selector:              selector.Raw,
 		NewName:               newName,
+		Engine:                engine,
 		Write:                 opts.Write,
 		UpdateCallsites:       opts.UpdateCallsites,
 		CrossPackageCallsites: opts.CrossPackageCallsites,
@@ -208,6 +219,19 @@ func RenameDeclarations(idx *model.Index, selector query.Selector, newName strin
 	})
 
 	return report, nil
+}
+
+func normalizeEngine(raw string) string {
+	engine := strings.ToLower(strings.TrimSpace(raw))
+	if engine == "" {
+		return "go"
+	}
+	switch engine {
+	case "go", "treesitter":
+		return engine
+	default:
+		return ""
+	}
 }
 
 func supportsDeclarationRename(kind string) bool {

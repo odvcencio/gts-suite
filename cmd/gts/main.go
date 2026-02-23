@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"syscall"
@@ -16,6 +17,8 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 	"github.com/odvcencio/fluffyui/keybind"
+	"github.com/odvcencio/gotreesitter"
+	"github.com/odvcencio/gotreesitter/grammars"
 
 	"gts-suite/internal/bridge"
 	"gts-suite/internal/chunk"
@@ -50,6 +53,34 @@ type grepMatch struct {
 	Signature string `json:"signature,omitempty"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+}
+
+type referenceMatch struct {
+	File        string `json:"file"`
+	Kind        string `json:"kind"`
+	Name        string `json:"name"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	StartColumn int    `json:"start_column"`
+	EndColumn   int    `json:"end_column"`
+}
+
+type queryCaptureMatch struct {
+	File        string `json:"file"`
+	Language    string `json:"language"`
+	Pattern     int    `json:"pattern"`
+	Capture     string `json:"capture"`
+	NodeType    string `json:"node_type"`
+	Text        string `json:"text"`
+	StartLine   int    `json:"start_line"`
+	EndLine     int    `json:"end_line"`
+	StartColumn int    `json:"start_column"`
+	EndColumn   int    `json:"end_column"`
+}
+
+type queryLanguageError struct {
+	Language string `json:"language"`
+	Error    string `json:"error"`
 }
 
 type exitCodeError struct {
@@ -145,6 +176,20 @@ func newCLI() *cli {
 			Run:     runGrep,
 		},
 		{
+			ID:      "gtsrefs",
+			Aliases: []string{"refs"},
+			Summary: "Find indexed references by symbol name",
+			Usage:   "gtsrefs <name|regex> [path] [--cache .gts/index.json] [--regex] [--count] [--json]",
+			Run:     runRefs,
+		},
+		{
+			ID:      "gtsquery",
+			Aliases: []string{"query"},
+			Summary: "Run raw tree-sitter S-expression queries across files",
+			Usage:   "gtsquery <pattern> [path] [--cache .gts/index.json] [--capture name] [--count] [--json]",
+			Run:     runQuery,
+		},
+		{
 			ID:      "gtsdiff",
 			Aliases: []string{"diff"},
 			Summary: "Structural diff between two snapshots",
@@ -155,7 +200,7 @@ func newCLI() *cli {
 			ID:      "gtsrefactor",
 			Aliases: []string{"refactor"},
 			Summary: "Apply structural declaration renames (dry-run by default)",
-			Usage:   "gtsrefactor <selector> <new-name> [path] [--cache file] [--callsites] [--cross-package] [--write] [--json]",
+			Usage:   "gtsrefactor <selector> <new-name> [path] [--cache file] [--engine go|treesitter] [--callsites] [--cross-package] [--write] [--json]",
 			Run:     runRefactor,
 		},
 		{
@@ -283,8 +328,10 @@ func (c *cli) printHelp() {
 	fmt.Println("  gts gtsdeps . --by package --focus internal/query --depth 2 --reverse")
 	fmt.Println("  gts gtsbridge . --focus internal/query --depth 2 --reverse")
 	fmt.Println("  gts gtsgrep 'function_definition[name=/^Test/]' .")
+	fmt.Println("  gts gtsrefs OldName .")
+	fmt.Println("  gts gtsquery '(function_declaration (identifier) @name)' .")
 	fmt.Println("  gts gtsdiff --before-cache before.json --after-cache after.json")
-	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write")
+	fmt.Println("  gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --engine go --callsites --cross-package --write")
 	fmt.Println("  gts gtschunk . --tokens 500 --json")
 	fmt.Println("  gts gtsscope cmd/gts/main.go --line 300")
 	fmt.Println("  gts gtscontext cmd/gts/main.go --line 120 --tokens 600")
@@ -1067,6 +1114,329 @@ func runGrep(args []string) error {
 	return nil
 }
 
+func runRefs(args []string) error {
+	flags := flag.NewFlagSet("gtsrefs", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	args = normalizeFlagArgs(args, map[string]bool{
+		"-cache":  true,
+		"--cache": true,
+		"-regex":  false,
+		"--regex": false,
+		"-json":   false,
+		"--json":  false,
+		"-count":  false,
+		"--count": false,
+	})
+
+	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
+	regexMode := flags.Bool("regex", false, "treat the first argument as a regular expression")
+	jsonOutput := flags.Bool("json", false, "emit JSON output")
+	countOnly := flags.Bool("count", false, "print the number of matches")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() < 1 || flags.NArg() > 2 {
+		return errors.New("usage: gtsrefs <name|regex> [path]")
+	}
+
+	target := "."
+	if flags.NArg() == 2 {
+		target = flags.Arg(1)
+	}
+
+	idx, err := loadOrBuild(*cachePath, target)
+	if err != nil {
+		return err
+	}
+
+	pattern := strings.TrimSpace(flags.Arg(0))
+	if pattern == "" {
+		return errors.New("reference matcher cannot be empty")
+	}
+
+	matchReference := func(name string) bool { return name == pattern }
+	if *regexMode {
+		compiled, compileErr := regexp.Compile(pattern)
+		if compileErr != nil {
+			return fmt.Errorf("compile regex: %w", compileErr)
+		}
+		matchReference = compiled.MatchString
+	}
+
+	matches := make([]referenceMatch, 0, idx.ReferenceCount())
+	for _, file := range idx.Files {
+		for _, reference := range file.References {
+			if !matchReference(reference.Name) {
+				continue
+			}
+			matches = append(matches, referenceMatch{
+				File:        file.Path,
+				Kind:        reference.Kind,
+				Name:        reference.Name,
+				StartLine:   reference.StartLine,
+				EndLine:     reference.EndLine,
+				StartColumn: reference.StartColumn,
+				EndColumn:   reference.EndColumn,
+			})
+		}
+	}
+
+	sort.Slice(matches, func(i, j int) bool {
+		if matches[i].File == matches[j].File {
+			if matches[i].StartLine == matches[j].StartLine {
+				if matches[i].StartColumn == matches[j].StartColumn {
+					return matches[i].Name < matches[j].Name
+				}
+				return matches[i].StartColumn < matches[j].StartColumn
+			}
+			return matches[i].StartLine < matches[j].StartLine
+		}
+		return matches[i].File < matches[j].File
+	})
+
+	if *jsonOutput {
+		if *countOnly {
+			return emitJSON(struct {
+				Count int `json:"count"`
+			}{Count: len(matches)})
+		}
+		return emitJSON(matches)
+	}
+
+	if *countOnly {
+		fmt.Println(len(matches))
+		return nil
+	}
+	for _, match := range matches {
+		fmt.Printf("%s:%d:%d %s %s\n", match.File, match.StartLine, match.StartColumn, match.Kind, match.Name)
+	}
+	return nil
+}
+
+func runQuery(args []string) error {
+	flags := flag.NewFlagSet("gtsquery", flag.ContinueOnError)
+	flags.SetOutput(os.Stderr)
+
+	var captures stringList
+	args = normalizeFlagArgs(args, map[string]bool{
+		"-cache":    true,
+		"--cache":   true,
+		"-capture":  true,
+		"--capture": true,
+		"-json":     false,
+		"--json":    false,
+		"-count":    false,
+		"--count":   false,
+	})
+
+	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
+	jsonOutput := flags.Bool("json", false, "emit JSON output")
+	countOnly := flags.Bool("count", false, "print the number of captures")
+	flags.Var(&captures, "capture", "capture name filter (repeatable)")
+
+	if err := flags.Parse(args); err != nil {
+		return err
+	}
+	if flags.NArg() < 1 || flags.NArg() > 2 {
+		return errors.New("usage: gtsquery <pattern> [path]")
+	}
+
+	queryText := strings.TrimSpace(flags.Arg(0))
+	if queryText == "" {
+		return errors.New("query pattern cannot be empty")
+	}
+
+	target := "."
+	if flags.NArg() == 2 {
+		target = flags.Arg(1)
+	}
+	idx, err := loadOrBuild(*cachePath, target)
+	if err != nil {
+		return err
+	}
+
+	captureFilter := map[string]bool{}
+	for _, name := range captures {
+		captureFilter[strings.TrimSpace(name)] = true
+	}
+
+	entriesByLanguage := map[string]grammars.LangEntry{}
+	for _, entry := range grammars.AllLanguages() {
+		if strings.TrimSpace(entry.Name) == "" || entry.Language == nil {
+			continue
+		}
+		entriesByLanguage[entry.Name] = entry
+	}
+
+	queryByLanguage := map[string]*gotreesitter.Query{}
+	queryErrorByLanguage := map[string]string{}
+	langByName := map[string]*gotreesitter.Language{}
+	parserByLanguage := map[string]*gotreesitter.Parser{}
+
+	results := make([]queryCaptureMatch, 0, idx.SymbolCount())
+	for _, file := range idx.Files {
+		entry, ok := entriesByLanguage[file.Language]
+		if !ok {
+			continue
+		}
+		if _, failed := queryErrorByLanguage[file.Language]; failed {
+			continue
+		}
+
+		lang, ok := langByName[file.Language]
+		if !ok {
+			lang = entry.Language()
+			if lang == nil {
+				queryErrorByLanguage[file.Language] = "language loader returned nil"
+				continue
+			}
+			langByName[file.Language] = lang
+		}
+
+		queryForLanguage, ok := queryByLanguage[file.Language]
+		if !ok {
+			compiled, compileErr := gotreesitter.NewQuery(queryText, lang)
+			if compileErr != nil {
+				queryErrorByLanguage[file.Language] = compileErr.Error()
+				continue
+			}
+			queryByLanguage[file.Language] = compiled
+			queryForLanguage = compiled
+		}
+
+		sourcePath := filepath.Join(idx.Root, filepath.FromSlash(file.Path))
+		source, readErr := os.ReadFile(sourcePath)
+		if readErr != nil {
+			return readErr
+		}
+
+		parser, ok := parserByLanguage[file.Language]
+		if !ok {
+			parser = gotreesitter.NewParser(lang)
+			parserByLanguage[file.Language] = parser
+		}
+
+		var tree *gotreesitter.Tree
+		if entry.TokenSourceFactory != nil {
+			tokenSource := entry.TokenSourceFactory(source, lang)
+			if tokenSource != nil {
+				tree = parser.ParseWithTokenSource(source, tokenSource)
+			}
+		}
+		if tree == nil {
+			tree = parser.Parse(source)
+		}
+		if tree == nil || tree.RootNode() == nil {
+			continue
+		}
+
+		matches := queryForLanguage.Execute(tree)
+		for _, match := range matches {
+			for _, capture := range match.Captures {
+				if len(captureFilter) > 0 && !captureFilter[capture.Name] {
+					continue
+				}
+				node := capture.Node
+				if node == nil {
+					continue
+				}
+				startLine := int(node.StartPoint().Row) + 1
+				endLine := int(node.EndPoint().Row) + 1
+				if endLine < startLine {
+					endLine = startLine
+				}
+				startColumn := int(node.StartPoint().Column) + 1
+				endColumn := int(node.EndPoint().Column) + 1
+				if endColumn < startColumn {
+					endColumn = startColumn
+				}
+				results = append(results, queryCaptureMatch{
+					File:        file.Path,
+					Language:    file.Language,
+					Pattern:     match.PatternIndex,
+					Capture:     capture.Name,
+					NodeType:    node.Type(lang),
+					Text:        compactNodeText(node.Text(source)),
+					StartLine:   startLine,
+					EndLine:     endLine,
+					StartColumn: startColumn,
+					EndColumn:   endColumn,
+				})
+			}
+		}
+		tree.Release()
+	}
+
+	sort.Slice(results, func(i, j int) bool {
+		if results[i].File == results[j].File {
+			if results[i].StartLine == results[j].StartLine {
+				if results[i].StartColumn == results[j].StartColumn {
+					return results[i].Capture < results[j].Capture
+				}
+				return results[i].StartColumn < results[j].StartColumn
+			}
+			return results[i].StartLine < results[j].StartLine
+		}
+		return results[i].File < results[j].File
+	})
+
+	languageErrors := make([]queryLanguageError, 0, len(queryErrorByLanguage))
+	for language, value := range queryErrorByLanguage {
+		languageErrors = append(languageErrors, queryLanguageError{
+			Language: language,
+			Error:    value,
+		})
+	}
+	sort.Slice(languageErrors, func(i, j int) bool {
+		return languageErrors[i].Language < languageErrors[j].Language
+	})
+
+	if *jsonOutput {
+		if *countOnly {
+			return emitJSON(struct {
+				Count          int                  `json:"count"`
+				LanguageErrors []queryLanguageError `json:"language_errors,omitempty"`
+			}{
+				Count:          len(results),
+				LanguageErrors: languageErrors,
+			})
+		}
+		return emitJSON(struct {
+			Matches        []queryCaptureMatch  `json:"matches,omitempty"`
+			Count          int                  `json:"count"`
+			LanguageErrors []queryLanguageError `json:"language_errors,omitempty"`
+		}{
+			Matches:        results,
+			Count:          len(results),
+			LanguageErrors: languageErrors,
+		})
+	}
+
+	for _, item := range languageErrors {
+		fmt.Fprintf(os.Stderr, "query: skip language=%s err=%s\n", item.Language, item.Error)
+	}
+
+	if *countOnly {
+		fmt.Println(len(results))
+		return nil
+	}
+
+	for _, match := range results {
+		fmt.Printf(
+			"%s:%d:%d capture=%s type=%s text=%q\n",
+			match.File,
+			match.StartLine,
+			match.StartColumn,
+			match.Capture,
+			match.NodeType,
+			match.Text,
+		)
+	}
+	return nil
+}
+
 func runDiff(args []string) error {
 	flags := flag.NewFlagSet("gtsdiff", flag.ContinueOnError)
 	flags.SetOutput(os.Stderr)
@@ -1148,6 +1518,8 @@ func runRefactor(args []string) error {
 	args = normalizeFlagArgs(args, map[string]bool{
 		"-cache":          true,
 		"--cache":         true,
+		"-engine":         true,
+		"--engine":        true,
 		"-callsites":      false,
 		"--callsites":     false,
 		"-cross-package":  false,
@@ -1159,6 +1531,7 @@ func runRefactor(args []string) error {
 	})
 
 	cachePath := flags.String("cache", "", "load index from cache instead of parsing")
+	engine := flags.String("engine", "go", "refactor engine: go|treesitter")
 	updateCallsites := flags.Bool("callsites", false, "update resolved same-package callsites")
 	crossPackage := flags.Bool("cross-package", false, "update resolved cross-package callsites within the module")
 	writeChanges := flags.Bool("write", false, "apply edits in-place (default is dry-run)")
@@ -1194,6 +1567,7 @@ func runRefactor(args []string) error {
 		Write:                 *writeChanges,
 		UpdateCallsites:       *updateCallsites,
 		CrossPackageCallsites: *crossPackage,
+		Engine:                *engine,
 	})
 	if err != nil {
 		return err
@@ -1225,9 +1599,10 @@ func runRefactor(args []string) error {
 		fmt.Printf("%s:%d:%d %s %s %s -> %s %s\n", edit.File, edit.Line, edit.Column, edit.Category, edit.Kind, edit.OldName, edit.NewName, status)
 	}
 	fmt.Printf(
-		"refactor: selector=%q new=%q callsites=%t cross-package=%t matches=%d planned=%d (decl=%d callsites=%d) applied=%d files=%d\n",
+		"refactor: selector=%q new=%q engine=%q callsites=%t cross-package=%t matches=%d planned=%d (decl=%d callsites=%d) applied=%d files=%d\n",
 		report.Selector,
 		report.NewName,
+		report.Engine,
 		report.UpdateCallsites,
 		report.CrossPackageCallsites,
 		report.MatchCount,
@@ -1850,6 +2225,15 @@ func shouldIgnoreWatchPath(path string, ignorePaths map[string]bool) bool {
 		return true
 	}
 	return false
+}
+
+func compactNodeText(text string) string {
+	trimmed := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
+	const maxLen = 160
+	if len(trimmed) <= maxLen {
+		return trimmed
+	}
+	return trimmed[:maxLen] + "..."
 }
 
 func normalizeFlagArgs(args []string, valueFlags map[string]bool) []string {

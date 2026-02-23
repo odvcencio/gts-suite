@@ -11,6 +11,8 @@ Bootstrap implementation of a gotreesitter-style CLI suite with shared indexing 
 - `gtsdeps`: Analyze import dependency graph (package or file level).
 - `gtsbridge`: Map cross-component dependency bridges.
 - `gtsgrep`: Query symbols using structural selectors.
+- `gtsrefs`: Query indexed call/reference occurrences by symbol name or regex.
+- `gtsquery`: Run raw tree-sitter S-expression queries across files.
 - `gtsdiff`: Compare structural changes between two snapshots.
 - `gtsrefactor`: Apply structural declaration renames (dry-run by default).
 - `gtschunk`: Split code into AST-boundary chunks for retrieval/indexing.
@@ -33,6 +35,8 @@ go run ./cmd/gts gtsstats . --top 15
 go run ./cmd/gts gtsdeps . --by package --focus internal/query --depth 2 --reverse
 go run ./cmd/gts gtsbridge . --focus internal/query --depth 2 --reverse
 go run ./cmd/gts gtsgrep 'function_definition[name=/^Test/,start>=10]' --cache .gts/index.json
+go run ./cmd/gts gtsrefs ParseConfig . --cache .gts/index.json
+go run ./cmd/gts gtsquery '(function_declaration (identifier) @name)' . --count
 go run ./cmd/gts gtsgrep 'method_definition[receiver=/Service/,signature=/Serve/]' --cache .gts/index.json --count
 go run ./cmd/gts gtsdiff --before-cache before.json --after-cache after.json --json
 go run ./cmd/gts gtsrefactor 'function_definition[name=/^OldName$/]' NewName . --callsites --cross-package --write
@@ -89,6 +93,8 @@ Supported kinds in this version:
 - Bridges (`gtsbridge`) summarizes cross-component internal edges, external dependency pressure, and focus traversal.
 - Structural diff detects symbol additions/removals/modifications and import changes.
 - Structural refactor (`gtsrefactor`) supports AST-aware declaration renames plus same-package and module cross-package callsite updates.
+- Raw structural query (`gtsquery`) supports full tree-sitter patterns/captures across indexed files.
+- Reference lookup (`gtsrefs`) surfaces `reference.*` tags extracted during indexing.
 - Chunking (`gtschunk`) emits AST-boundary units with per-chunk token budgeting.
 - Scope resolution (`gtsscope`) reports in-scope imports, package symbols, and local declarations for Go files.
 - Context packing returns focus symbol, imports, bounded source snippet, and related symbols.
