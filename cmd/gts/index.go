@@ -13,6 +13,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"gts-suite/internal/ignore"
 	"gts-suite/internal/index"
 	"gts-suite/internal/model"
 	"gts-suite/internal/structdiff"
@@ -28,6 +29,7 @@ func newIndexCmd() *cobra.Command {
 	var reportChanges bool
 	var onceIfChanged bool
 	var interval time.Duration
+	var ignorePatterns []string
 
 	cmd := &cobra.Command{
 		Use:     "index [path]",
@@ -54,6 +56,17 @@ func newIndexCmd() *cobra.Command {
 			}
 
 			builder := index.NewBuilder()
+
+			// Load .gtsignore from target directory, merge with --ignore flags
+			var allIgnoreLines []string
+			if data, err := os.ReadFile(filepath.Join(target, ".gtsignore")); err == nil {
+				allIgnoreLines = append(allIgnoreLines, strings.Split(string(data), "\n")...)
+			}
+			allIgnoreLines = append(allIgnoreLines, ignorePatterns...)
+			if len(allIgnoreLines) > 0 {
+				builder.SetIgnore(ignore.ParsePatterns(allIgnoreLines))
+			}
+
 			var previous *model.Index
 			hasBaseline := false
 			if strings.TrimSpace(outPath) != "" {
@@ -205,7 +218,7 @@ func newIndexCmd() *cobra.Command {
 			}
 
 			if !poll {
-				if err := watchWithFSNotify(ctx, target, interval, ignorePaths, onChange); err == nil {
+				if err := watchWithFSNotify(ctx, target, interval, ignorePaths, builder.Ignore(), onChange); err == nil {
 					fmt.Println("watch: stopped")
 					return nil
 				} else {
@@ -236,6 +249,7 @@ func newIndexCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&reportChanges, "report-changes", false, "print grouped structural change summary against previous cache")
 	cmd.Flags().BoolVar(&onceIfChanged, "once-if-changed", false, "exit with code 2 when structural changes are detected")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "poll interval for watch mode")
+	cmd.Flags().StringArrayVar(&ignorePatterns, "ignore", nil, "additional ignore patterns (repeatable, merged with .gtsignore)")
 	return cmd
 }
 

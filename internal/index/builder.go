@@ -15,6 +15,7 @@ import (
 
 	"github.com/odvcencio/gotreesitter/grammars"
 
+	"gts-suite/internal/ignore"
 	"gts-suite/internal/lang"
 	"gts-suite/internal/lang/treesitter"
 	"gts-suite/internal/model"
@@ -24,6 +25,7 @@ const schemaVersion = "0.1.0"
 
 type Builder struct {
 	parsers map[string]lang.Parser
+	ignore  *ignore.Matcher
 }
 
 type BuildStats struct {
@@ -67,6 +69,16 @@ func (b *Builder) registerTreesitterParsers() {
 			b.parsers[normalized] = parser
 		}
 	}
+}
+
+// SetIgnore configures a .gtsignore-style matcher to skip paths during indexing.
+func (b *Builder) SetIgnore(m *ignore.Matcher) {
+	b.ignore = m
+}
+
+// Ignore returns the current ignore matcher, or nil if none is set.
+func (b *Builder) Ignore() *ignore.Matcher {
+	return b.ignore
 }
 
 func (b *Builder) Register(extension string, parser lang.Parser) {
@@ -379,7 +391,20 @@ func (b *Builder) collectCandidates(root string) ([]sourceCandidate, error) {
 			if strings.HasPrefix(name, ".") && path != root {
 				return filepath.SkipDir
 			}
+			if path != root && b.ignore != nil {
+				relPath, relErr := filepath.Rel(root, path)
+				if relErr == nil && b.ignore.Match(filepath.ToSlash(relPath), true) {
+					return filepath.SkipDir
+				}
+			}
 			return nil
+		}
+
+		if b.ignore != nil {
+			relPath, relErr := filepath.Rel(root, path)
+			if relErr == nil && b.ignore.Match(filepath.ToSlash(relPath), false) {
+				return nil
+			}
 		}
 
 		parser, ok := b.parserForPath(path)

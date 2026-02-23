@@ -11,12 +11,13 @@ import (
 
 	"github.com/fsnotify/fsnotify"
 
+	"gts-suite/internal/ignore"
 	"gts-suite/internal/index"
 	"gts-suite/internal/model"
 	"gts-suite/internal/structdiff"
 )
 
-func watchWithFSNotify(ctx context.Context, target string, debounce time.Duration, ignorePaths map[string]bool, onChange func(changedPaths []string)) error {
+func watchWithFSNotify(ctx context.Context, target string, debounce time.Duration, ignorePaths map[string]bool, ignoreMatcher *ignore.Matcher, onChange func(changedPaths []string)) error {
 	roots, err := watchRoots(target)
 	if err != nil {
 		return err
@@ -28,8 +29,11 @@ func watchWithFSNotify(ctx context.Context, target string, debounce time.Duratio
 	}
 	defer watcher.Close()
 
+	absTarget, _ := filepath.Abs(target)
+	absTarget = filepath.Clean(absTarget)
+
 	for _, root := range roots {
-		if err := addWatchRecursive(watcher, root); err != nil {
+		if err := addWatchRecursive(watcher, root, absTarget, ignoreMatcher); err != nil {
 			return err
 		}
 	}
@@ -74,13 +78,13 @@ func watchWithFSNotify(ctx context.Context, target string, debounce time.Duratio
 			}
 
 			eventPath := filepath.Clean(event.Name)
-			if shouldIgnoreWatchPath(eventPath, ignorePaths) {
+			if shouldIgnoreWatchPath(eventPath, ignorePaths, absTarget, ignoreMatcher) {
 				continue
 			}
 
 			if event.Op&fsnotify.Create != 0 {
 				if info, statErr := os.Stat(eventPath); statErr == nil && info.IsDir() {
-					_ = addWatchRecursive(watcher, eventPath)
+					_ = addWatchRecursive(watcher, eventPath, absTarget, ignoreMatcher)
 				}
 			}
 
@@ -125,7 +129,7 @@ func watchRoots(target string) ([]string, error) {
 	return []string{filepath.Dir(absTarget)}, nil
 }
 
-func addWatchRecursive(watcher *fsnotify.Watcher, root string) error {
+func addWatchRecursive(watcher *fsnotify.Watcher, root string, projectRoot string, ignoreMatcher *ignore.Matcher) error {
 	root = filepath.Clean(root)
 	return filepath.WalkDir(root, func(path string, entry os.DirEntry, walkErr error) error {
 		if walkErr != nil {
@@ -134,14 +138,14 @@ func addWatchRecursive(watcher *fsnotify.Watcher, root string) error {
 		if !entry.IsDir() {
 			return nil
 		}
-		if shouldSkipWatchDir(root, path, entry.Name()) {
+		if shouldSkipWatchDir(projectRoot, path, entry.Name(), ignoreMatcher) {
 			return filepath.SkipDir
 		}
 		return watcher.Add(path)
 	})
 }
 
-func shouldSkipWatchDir(root, path, name string) bool {
+func shouldSkipWatchDir(root, path, name string, ignoreMatcher *ignore.Matcher) bool {
 	if path == root {
 		return false
 	}
@@ -152,10 +156,17 @@ func shouldSkipWatchDir(root, path, name string) bool {
 	if strings.HasPrefix(name, ".") {
 		return true
 	}
+	if ignoreMatcher != nil {
+		if relPath, err := filepath.Rel(root, path); err == nil {
+			if ignoreMatcher.Match(filepath.ToSlash(relPath), true) {
+				return true
+			}
+		}
+	}
 	return false
 }
 
-func shouldIgnoreWatchPath(path string, ignorePaths map[string]bool) bool {
+func shouldIgnoreWatchPath(path string, ignorePaths map[string]bool, root string, ignoreMatcher *ignore.Matcher) bool {
 	if ignorePaths[path] {
 		return true
 	}
@@ -163,6 +174,13 @@ func shouldIgnoreWatchPath(path string, ignorePaths map[string]bool) bool {
 	base := filepath.Base(path)
 	if base == ".DS_Store" || strings.HasSuffix(base, ".swp") || strings.HasSuffix(base, ".swx") || strings.HasPrefix(base, ".#") {
 		return true
+	}
+	if ignoreMatcher != nil {
+		if relPath, err := filepath.Rel(root, path); err == nil {
+			if ignoreMatcher.Match(filepath.ToSlash(relPath), false) {
+				return true
+			}
+		}
 	}
 	return false
 }

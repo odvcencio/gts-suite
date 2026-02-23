@@ -145,7 +145,7 @@ func TestShouldSkipWatchDir(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		got := shouldSkipWatchDir(root, tc.path, tc.name)
+		got := shouldSkipWatchDir(root, tc.path, tc.name, nil)
 		if got != tc.want {
 			t.Fatalf("shouldSkipWatchDir(%q,%q)=%v want=%v", tc.path, tc.name, got, tc.want)
 		}
@@ -157,13 +157,13 @@ func TestShouldIgnoreWatchPath(t *testing.T) {
 		filepath.Clean("/tmp/repo/.gts/index.json"): true,
 	}
 
-	if !shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/.gts/index.json"), ignored) {
+	if !shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/.gts/index.json"), ignored, "/tmp/repo", nil) {
 		t.Fatal("expected explicit ignored path to be ignored")
 	}
-	if !shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/.#file.go"), ignored) {
+	if !shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/.#file.go"), ignored, "/tmp/repo", nil) {
 		t.Fatal("expected editor lockfile to be ignored")
 	}
-	if shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/main.go"), ignored) {
+	if shouldIgnoreWatchPath(filepath.Clean("/tmp/repo/main.go"), ignored, "/tmp/repo", nil) {
 		t.Fatal("did not expect regular source file to be ignored")
 	}
 }
