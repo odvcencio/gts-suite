@@ -342,6 +342,7 @@ func (c *cli) printHelp() {
 	}
 	sort.Strings(ids)
 
+	fmt.Fprintf(os.Stderr, "gts v%s\n\n", version)
 	fmt.Println("gts-suite CLI")
 	fmt.Println()
 	fmt.Println("Usage:")
