@@ -1,38 +1,41 @@
 package main
 
 import (
-	"errors"
-	"flag"
 	"os"
+
+	"github.com/spf13/cobra"
 
 	"gts-suite/internal/mcp"
 )
 
+func newMCPCmd() *cobra.Command {
+	var root string
+	var cachePath string
+	var allowWrites bool
+
+	cmd := &cobra.Command{
+		Use:     "mcp",
+		Aliases: []string{"gtsmcp"},
+		Short:   "Run MCP stdio server for AI-agent tool integration",
+		Args:    cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			service := mcp.NewServiceWithOptions(root, cachePath, mcp.ServiceOptions{
+				AllowWrites: allowWrites,
+			})
+			return mcp.RunStdio(service, os.Stdin, os.Stdout, os.Stderr)
+		},
+	}
+
+	cmd.Flags().StringVar(&root, "root", ".", "default root path for tool calls")
+	cmd.Flags().StringVar(&cachePath, "cache", "", "default cache path for tool calls")
+	cmd.Flags().BoolVar(&allowWrites, "allow-writes", false, "allow MCP tools to mutate files (e.g. gts_refactor write mode)")
+	return cmd
+}
+
 func runMCP(args []string) error {
-	flags := flag.NewFlagSet("gtsmcp", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-
-	args = normalizeFlagArgs(args, map[string]bool{
-		"-root":          true,
-		"--root":         true,
-		"-cache":         true,
-		"--cache":        true,
-		"-allow-writes":  false,
-		"--allow-writes": false,
-	})
-
-	root := flags.String("root", ".", "default root path for tool calls")
-	cachePath := flags.String("cache", "", "default cache path for tool calls")
-	allowWrites := flags.Bool("allow-writes", false, "allow MCP tools to mutate files (e.g. gts_refactor write mode)")
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() > 0 {
-		return errors.New("usage: gtsmcp [--root .] [--cache .gts/index.json] [--allow-writes]")
-	}
-
-	service := mcp.NewServiceWithOptions(*root, *cachePath, mcp.ServiceOptions{
-		AllowWrites: *allowWrites,
-	})
-	return mcp.RunStdio(service, os.Stdin, os.Stdout, os.Stderr)
+	cmd := newMCPCmd()
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs(args)
+	return cmd.Execute()
 }

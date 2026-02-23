@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"os"
 	"path/filepath"
-	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -12,19 +11,10 @@ import (
 	"gts-suite/internal/structdiff"
 )
 
-func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
-	app := newCLI()
+func TestNewRootCmd_HasCoreCommandsAndAliases(t *testing.T) {
+	root := newRootCmd()
 
-	for _, id := range []string{"gtsindex", "gtsmap", "gtsfiles", "gtsstats", "gtsdeps", "gtsbridge", "gtsgrep", "gtsrefs", "gtscallgraph", "gtsdead", "gtsquery", "gtsmcp", "gtsdiff", "gtsrefactor", "gtschunk", "gtsscope", "gtscontext", "gtslint"} {
-		if _, ok := app.specs[id]; !ok {
-			t.Fatalf("missing command spec for %q", id)
-		}
-		if mapped, ok := app.aliasToID[id]; !ok || mapped != id {
-			t.Fatalf("missing canonical alias for %q", id)
-		}
-	}
-
-	for alias, id := range map[string]string{
+	expected := map[string]string{
 		"index":     "gtsindex",
 		"map":       "gtsmap",
 		"files":     "gtsfiles",
@@ -43,46 +33,47 @@ func TestNewCLI_HasCoreCommandsAndAliases(t *testing.T) {
 		"scope":     "gtsscope",
 		"context":   "gtscontext",
 		"lint":      "gtslint",
-	} {
-		if mapped, ok := app.aliasToID[alias]; !ok || mapped != id {
-			t.Fatalf("alias %q mapped to %q (ok=%v), want %q", alias, mapped, ok, id)
+	}
+
+	for name, alias := range expected {
+		sub, _, err := root.Find([]string{name})
+		if err != nil || sub == root {
+			t.Fatalf("missing subcommand %q", name)
+		}
+		found := false
+		for _, a := range sub.Aliases {
+			if a == alias {
+				found = true
+				break
+			}
+		}
+		if !found {
+			t.Fatalf("subcommand %q missing alias %q, has %v", name, alias, sub.Aliases)
 		}
 	}
 }
 
-func TestCLI_RunUnknownCommand(t *testing.T) {
-	app := newCLI()
-	if err := app.Run([]string{"unknown-command"}); err == nil {
+func TestRootCmd_RunUnknownCommand(t *testing.T) {
+	cmd := newRootCmd()
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs([]string{"unknown-command"})
+	if err := cmd.Execute(); err == nil {
 		t.Fatal("expected unknown command to return error")
 	}
 }
 
-func TestCLI_HelpSubcommand(t *testing.T) {
-	app := newCLI()
-
-	originalStdout := os.Stdout
-	readPipe, writePipe, err := os.Pipe()
-	if err != nil {
-		t.Fatalf("os.Pipe failed: %v", err)
-	}
-	os.Stdout = writePipe
-	defer func() {
-		os.Stdout = originalStdout
-	}()
-
-	runErr := app.Run([]string{"help", "gtsgrep"})
-	_ = writePipe.Close()
-	if runErr != nil {
-		t.Fatalf("Run returned error: %v", runErr)
-	}
-
+func TestRootCmd_HelpSubcommand(t *testing.T) {
+	cmd := newRootCmd()
 	var output bytes.Buffer
-	if _, err := output.ReadFrom(readPipe); err != nil {
-		t.Fatalf("ReadFrom failed: %v", err)
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"help", "grep"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatalf("Execute returned error: %v", err)
 	}
 	text := output.String()
-	if !strings.Contains(text, "Usage:   gts gtsgrep") {
-		t.Fatalf("expected command usage in help output, got %q", text)
+	if !strings.Contains(text, "Structural grep over indexed symbols") {
+		t.Fatalf("expected command description in help output, got %q", text)
 	}
 }
 
@@ -107,18 +98,6 @@ func TestRunMCPParsesAllowWritesFlag(t *testing.T) {
 
 	if err := runMCP([]string{"--allow-writes"}); err != nil {
 		t.Fatalf("runMCP returned error with --allow-writes: %v", err)
-	}
-}
-
-func TestNormalizeFlagArgs_ReordersInterspersedFlags(t *testing.T) {
-	args := []string{"function_definition[name=/^Test/]", "--cache", ".gts/index.json", "--json"}
-	got := normalizeFlagArgs(args, map[string]bool{
-		"--cache": true,
-		"--json":  false,
-	})
-	want := []string{"--cache", ".gts/index.json", "--json", "function_definition[name=/^Test/]"}
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("normalizeFlagArgs mismatch\nwant=%v\ngot=%v", want, got)
 	}
 }
 

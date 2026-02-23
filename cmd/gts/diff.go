@@ -2,86 +2,88 @@ package main
 
 import (
 	"errors"
-	"flag"
 	"fmt"
-	"os"
 	"strings"
+
+	"github.com/spf13/cobra"
 
 	"gts-suite/internal/structdiff"
 )
 
+func newDiffCmd() *cobra.Command {
+	var beforeCache string
+	var afterCache string
+	var jsonOutput bool
+
+	cmd := &cobra.Command{
+		Use:     "diff [before-path] [after-path]",
+		Aliases: []string{"gtsdiff"},
+		Short:   "Structural diff between two snapshots",
+		Args:    cobra.MaximumNArgs(2),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			beforeTarget, afterTarget, err := resolveDiffSources(args, beforeCache, afterCache)
+			if err != nil {
+				return err
+			}
+
+			beforeIndex, err := loadOrBuild(beforeCache, beforeTarget)
+			if err != nil {
+				return fmt.Errorf("load before snapshot: %w", err)
+			}
+			afterIndex, err := loadOrBuild(afterCache, afterTarget)
+			if err != nil {
+				return fmt.Errorf("load after snapshot: %w", err)
+			}
+
+			report := structdiff.Compare(beforeIndex, afterIndex)
+			if jsonOutput {
+				return emitJSON(report)
+			}
+
+			fmt.Printf("changed files: %d\n", report.Stats.ChangedFiles)
+			fmt.Printf("symbols: +%d -%d ~%d\n", report.Stats.AddedSymbols, report.Stats.RemovedSymbols, report.Stats.ModifiedSymbols)
+
+			for _, item := range report.AddedSymbols {
+				fmt.Printf("+ %s:%d:%d %s %s\n", item.File, item.StartLine, item.EndLine, item.Kind, symbolLabel(item.Name, item.Signature))
+			}
+			for _, item := range report.RemovedSymbols {
+				fmt.Printf("- %s:%d:%d %s %s\n", item.File, item.StartLine, item.EndLine, item.Kind, symbolLabel(item.Name, item.Signature))
+			}
+			for _, item := range report.ModifiedSymbols {
+				fmt.Printf("~ %s:%d:%d %s %s fields=%s\n",
+					item.After.File,
+					item.After.StartLine,
+					item.After.EndLine,
+					item.After.Kind,
+					symbolLabel(item.After.Name, item.After.Signature),
+					strings.Join(item.Fields, ","))
+			}
+			for _, change := range report.ImportChanges {
+				parts := make([]string, 0, 2)
+				if len(change.Added) > 0 {
+					parts = append(parts, "added="+strings.Join(change.Added, ","))
+				}
+				if len(change.Removed) > 0 {
+					parts = append(parts, "removed="+strings.Join(change.Removed, ","))
+				}
+				fmt.Printf("i %s %s\n", change.File, strings.Join(parts, " "))
+			}
+			return nil
+		},
+	}
+
+	cmd.Flags().StringVar(&beforeCache, "before-cache", "", "load before snapshot from cache file")
+	cmd.Flags().StringVar(&afterCache, "after-cache", "", "load after snapshot from cache file")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	return cmd
+}
+
 func runDiff(args []string) error {
-	flags := flag.NewFlagSet("gtsdiff", flag.ContinueOnError)
-	flags.SetOutput(os.Stderr)
-
-	args = normalizeFlagArgs(args, map[string]bool{
-		"-before-cache":  true,
-		"--before-cache": true,
-		"-after-cache":   true,
-		"--after-cache":  true,
-		"-json":          false,
-		"--json":         false,
-	})
-
-	beforeCache := flags.String("before-cache", "", "load before snapshot from cache file")
-	afterCache := flags.String("after-cache", "", "load after snapshot from cache file")
-	jsonOutput := flags.Bool("json", false, "emit JSON output")
-
-	if err := flags.Parse(args); err != nil {
-		return err
-	}
-	if flags.NArg() > 2 {
-		return errors.New("usage: gtsdiff [before-path] [after-path]")
-	}
-
-	beforeTarget, afterTarget, err := resolveDiffSources(flags.Args(), *beforeCache, *afterCache)
-	if err != nil {
-		return err
-	}
-
-	beforeIndex, err := loadOrBuild(*beforeCache, beforeTarget)
-	if err != nil {
-		return fmt.Errorf("load before snapshot: %w", err)
-	}
-	afterIndex, err := loadOrBuild(*afterCache, afterTarget)
-	if err != nil {
-		return fmt.Errorf("load after snapshot: %w", err)
-	}
-
-	report := structdiff.Compare(beforeIndex, afterIndex)
-	if *jsonOutput {
-		return emitJSON(report)
-	}
-
-	fmt.Printf("changed files: %d\n", report.Stats.ChangedFiles)
-	fmt.Printf("symbols: +%d -%d ~%d\n", report.Stats.AddedSymbols, report.Stats.RemovedSymbols, report.Stats.ModifiedSymbols)
-
-	for _, item := range report.AddedSymbols {
-		fmt.Printf("+ %s:%d:%d %s %s\n", item.File, item.StartLine, item.EndLine, item.Kind, symbolLabel(item.Name, item.Signature))
-	}
-	for _, item := range report.RemovedSymbols {
-		fmt.Printf("- %s:%d:%d %s %s\n", item.File, item.StartLine, item.EndLine, item.Kind, symbolLabel(item.Name, item.Signature))
-	}
-	for _, item := range report.ModifiedSymbols {
-		fmt.Printf("~ %s:%d:%d %s %s fields=%s\n",
-			item.After.File,
-			item.After.StartLine,
-			item.After.EndLine,
-			item.After.Kind,
-			symbolLabel(item.After.Name, item.After.Signature),
-			strings.Join(item.Fields, ","))
-	}
-	for _, change := range report.ImportChanges {
-		parts := make([]string, 0, 2)
-		if len(change.Added) > 0 {
-			parts = append(parts, "added="+strings.Join(change.Added, ","))
-		}
-		if len(change.Removed) > 0 {
-			parts = append(parts, "removed="+strings.Join(change.Removed, ","))
-		}
-		fmt.Printf("i %s %s\n", change.File, strings.Join(parts, " "))
-	}
-	return nil
+	cmd := newDiffCmd()
+	cmd.SilenceUsage = true
+	cmd.SilenceErrors = true
+	cmd.SetArgs(args)
+	return cmd.Execute()
 }
 
 func resolveDiffSources(args []string, beforeCache, afterCache string) (string, string, error) {
