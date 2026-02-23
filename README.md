@@ -98,7 +98,27 @@ Supported kinds in this version:
 
 ## Next increments
 
-- Expand `TagsQuery` coverage across additional gotreesitter language modules.
-- Expand selector grammar (field filters, boolean filters).
-- Extend `gtsrefactor` to cross-package method and interface usage resolution.
-- Expand `gtsscope` beyond Go with parser-backed symbol tables.
+- Phase 1: `gtsquery` raw tree-sitter query engine
+  - Add a first-class command to run full S-expression queries with predicates/alternation/quantifiers.
+  - Output structured captures (file, range, capture name, node text, node type).
+  - Keep `gtsgrep` as a fast ergonomic subset, but treat `gtsquery` as the power surface.
+- Phase 2: Definition + reference index model
+  - Extend index schema to persist references (`reference.call`, etc.), not just definitions.
+  - Add `gtsrefs`, `gtscallgraph`, and `gtsdead` commands.
+  - Use references for dead code detection and impact analysis.
+- Phase 3: Semantic context packing
+  - Add `gtscontext --semantic` that follows call/type dependencies instead of line distance only.
+  - Rank/pack related symbols under token budget by dependency relevance.
+  - Keep existing spatial mode as a fallback.
+- Phase 4: Query-file linting
+  - Add lint rule loading from `.scm` query files (`--pattern path.scm`).
+  - Keep built-in rules, but allow zero-recompile custom structural rules.
+  - Ship starter pattern library (`error-must-be-checked`, `no-deep-nesting`, etc.).
+- Phase 5: Sub-file incremental watch mode
+  - Use `Tree.Edit()` + incremental parsing for changed ranges.
+  - Maintain per-file live trees in watch mode and update symbols/references incrementally.
+  - Target near-instant watch feedback on large repositories.
+- Phase 6: MCP server
+  - Expose suite capabilities as MCP tools (`gts_query`, `gts_refs`, `gts_context`, `gts_scope`, `gts_deps`).
+  - Keep CLI UX for humans, but make MCP the primary integration point for AI agents.
+  - Add stable JSON contracts and versioned tool schemas.
