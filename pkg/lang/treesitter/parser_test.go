@@ -368,6 +368,74 @@ func Handle() {
 	}
 }
 
+func TestParseIncrementalWithTree_ConcurrentSharedTree(t *testing.T) {
+	entry := findEntryByExtension(t, ".go")
+	parser, err := NewParser(entry)
+	if err != nil {
+		t.Fatalf("NewParser returned error: %v", err)
+	}
+
+	oldSource := []byte(`package demo
+
+func A() {
+	println("old")
+}
+`)
+	_, oldTree, err := parser.ParseWithTree("main.go", oldSource)
+	if err != nil {
+		t.Fatalf("ParseWithTree returned error: %v", err)
+	}
+	if oldTree == nil || oldTree.RootNode() == nil {
+		t.Fatal("expected non-nil old tree")
+	}
+	defer oldTree.Release()
+
+	newSource := []byte(`package demo
+
+func A() {
+	println("new")
+}
+`)
+
+	const workers = 12
+
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			<-start
+
+			summary, newTree, parseErr := parser.ParseIncrementalWithTree(fmt.Sprintf("worker_%d.go", worker), newSource, oldSource, oldTree)
+			if newTree != nil && newTree != oldTree {
+				defer newTree.Release()
+			}
+			if parseErr != nil {
+				errCh <- parseErr
+				return
+			}
+			if !hasSymbol(summary, "function_definition", "A") {
+				errCh <- fmt.Errorf("missing A symbol for worker=%d", worker)
+				return
+			}
+			if !hasReference(summary, "reference.call", "println") {
+				errCh <- fmt.Errorf("missing println reference for worker=%d", worker)
+				return
+			}
+		}(worker)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}
+
 func findEntryByExtension(t *testing.T, extension string) grammars.LangEntry {
 	t.Helper()
 	for _, entry := range grammars.AllLanguages() {

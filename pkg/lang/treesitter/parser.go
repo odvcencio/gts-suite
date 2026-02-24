@@ -17,10 +17,17 @@ import (
 )
 
 type Parser struct {
-	entry      grammars.LangEntry
-	lang       *gotreesitter.Language
-	parserPool sync.Pool
-	tagger     *gotreesitter.Tagger
+	entry       grammars.LangEntry
+	lang        *gotreesitter.Language
+	parserPool  sync.Pool
+	tagger      *gotreesitter.Tagger
+	treeLocksMu sync.Mutex
+	treeLocks   map[*gotreesitter.Tree]*treeLockEntry
+}
+
+type treeLockEntry struct {
+	mu   sync.Mutex
+	refs int
 }
 
 // NewParser creates a Parser for the language described by the given LangEntry.
@@ -46,9 +53,10 @@ func NewParser(entry grammars.LangEntry) (*Parser, error) {
 	}
 
 	return &Parser{
-		entry:  entry,
-		lang:   lang,
-		tagger: tagger,
+		entry:     entry,
+		lang:      lang,
+		tagger:    tagger,
+		treeLocks: make(map[*gotreesitter.Tree]*treeLockEntry),
 		parserPool: sync.Pool{
 			New: func() any { return gotreesitter.NewParser(lang) },
 		},
@@ -98,7 +106,14 @@ func (p *Parser) ParseIncrementalWithTree(path string, src, oldSrc []byte, oldTr
 		return summary, gotreesitter.NewTree(nil, src, p.lang), nil
 	}
 
-	if oldTree == nil || oldTree.RootNode() == nil || len(oldSrc) == 0 {
+	if oldTree == nil || len(oldSrc) == 0 {
+		return p.ParseWithTree(path, src)
+	}
+
+	unlock := p.lockTree(oldTree)
+	defer unlock()
+
+	if oldTree.RootNode() == nil {
 		return p.ParseWithTree(path, src)
 	}
 
@@ -209,6 +224,34 @@ func (p *Parser) releaseParser(parser *gotreesitter.Parser) {
 		return
 	}
 	p.parserPool.Put(parser)
+}
+
+func (p *Parser) lockTree(tree *gotreesitter.Tree) func() {
+	if tree == nil {
+		return func() {}
+	}
+
+	p.treeLocksMu.Lock()
+	entry, exists := p.treeLocks[tree]
+	if !exists {
+		entry = &treeLockEntry{}
+		p.treeLocks[tree] = entry
+	}
+	entry.refs++
+	p.treeLocksMu.Unlock()
+
+	entry.mu.Lock()
+
+	return func() {
+		entry.mu.Unlock()
+
+		p.treeLocksMu.Lock()
+		entry.refs--
+		if entry.refs == 0 {
+			delete(p.treeLocks, tree)
+		}
+		p.treeLocksMu.Unlock()
+	}
 }
 
 func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {
