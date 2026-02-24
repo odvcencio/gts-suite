@@ -15,6 +15,7 @@ var ImportNodeTypes = map[string]bool{
 	"use_declaration":           true, // Rust / PHP
 	"namespace_use_declaration": true, // PHP
 	"using_directive":           true, // C#
+	"global_using_directive":    true, // C#
 	"import_header":             true, // Kotlin
 	"preproc_include":           true, // C/C++
 }

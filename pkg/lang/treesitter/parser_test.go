@@ -49,6 +49,9 @@ func (s *Service) ServeHTTP(w http.ResponseWriter, r *http.Request) {}
 	if len(summary.Imports) != 2 {
 		t.Fatalf("expected two imports, got %d", len(summary.Imports))
 	}
+	if !hasImport(summary, "fmt") || !hasImport(summary, "net/http") {
+		t.Fatalf("unexpected go imports %v", summary.Imports)
+	}
 
 	if !hasSymbol(summary, "type_definition", "Service") {
 		t.Fatal("expected type_definition Service")
@@ -121,7 +124,7 @@ class Worker:
 	if err != nil {
 		t.Fatalf("Parse returned error: %v", err)
 	}
-	if !hasImport(summary, "os") || !hasImport(summary, "sys") || !hasImport(summary, "pathlib") {
+	if !hasImport(summary, "import os, sys") || !hasImport(summary, "from pathlib import Path") {
 		t.Fatalf("unexpected imports %v", summary.Imports)
 	}
 
@@ -154,7 +157,7 @@ func TestParseJavaScriptAndTypeScriptImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse JS returned error: %v", err)
 	}
-	if !hasImport(jsSummary, "node:fs") || !hasImport(jsSummary, "./util.js") {
+	if !hasImport(jsSummary, `import fs from "node:fs";`) || !hasImport(jsSummary, `import {join} from "./util.js";`) {
 		t.Fatalf("unexpected JS imports %v", jsSummary.Imports)
 	}
 
@@ -162,7 +165,7 @@ func TestParseJavaScriptAndTypeScriptImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse TS returned error: %v", err)
 	}
-	if !hasImport(tsSummary, "./types") || !hasImport(tsSummary, "react") {
+	if !hasImport(tsSummary, `import type {Config} from "./types";`) || !hasImport(tsSummary, `import React from "react";`) {
 		t.Fatalf("unexpected TS imports %v", tsSummary.Imports)
 	}
 }
@@ -184,7 +187,7 @@ func TestParseRustAndJavaImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse Rust returned error: %v", err)
 	}
-	if !hasImport(rustSummary, "std") || !hasImport(rustSummary, "crate::service::Worker") {
+	if !hasImport(rustSummary, `use std::io::{self, Read};`) || !hasImport(rustSummary, `use crate::service::Worker;`) {
 		t.Fatalf("unexpected Rust imports %v", rustSummary.Imports)
 	}
 
@@ -192,8 +195,64 @@ func TestParseRustAndJavaImports(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Parse Java returned error: %v", err)
 	}
-	if !hasImport(javaSummary, "java.util.List") || !hasImport(javaSummary, "java.lang.Math.max") {
+	if !hasImport(javaSummary, `import java.util.List;`) || !hasImport(javaSummary, `import static java.lang.Math.max;`) {
 		t.Fatalf("unexpected Java imports %v", javaSummary.Imports)
+	}
+}
+
+func TestParseCFamilyCSharpAndKotlinImports(t *testing.T) {
+	cEntry := findEntryByExtension(t, ".c")
+	cppEntry := findEntryByExtension(t, ".cpp")
+	cSharpEntry := findEntryByExtension(t, ".cs")
+	kotlinEntry := findEntryByExtension(t, ".kt")
+
+	cParser, err := NewParser(cEntry)
+	if err != nil {
+		t.Fatalf("NewParser(c) returned error: %v", err)
+	}
+	cppParser, err := NewParser(cppEntry)
+	if err != nil {
+		t.Fatalf("NewParser(cpp) returned error: %v", err)
+	}
+	cSharpParser, err := NewParser(cSharpEntry)
+	if err != nil {
+		t.Fatalf("NewParser(c_sharp) returned error: %v", err)
+	}
+	kotlinParser, err := NewParser(kotlinEntry)
+	if err != nil {
+		t.Fatalf("NewParser(kotlin) returned error: %v", err)
+	}
+
+	cSummary, err := cParser.Parse("main.c", []byte("#include <stdio.h>\n#include \"local.h\"\nint main(void) { return 0; }\n"))
+	if err != nil {
+		t.Fatalf("Parse C returned error: %v", err)
+	}
+	if !hasImport(cSummary, "#include <stdio.h>") || !hasImport(cSummary, "#include \"local.h\"") {
+		t.Fatalf("unexpected C imports %v", cSummary.Imports)
+	}
+
+	cppSummary, err := cppParser.Parse("main.cpp", []byte("#include <vector>\n#include \"util.hpp\"\n"))
+	if err != nil {
+		t.Fatalf("Parse C++ returned error: %v", err)
+	}
+	if !hasImport(cppSummary, "#include <vector>") || !hasImport(cppSummary, "#include \"util.hpp\"") {
+		t.Fatalf("unexpected C++ imports %v", cppSummary.Imports)
+	}
+
+	cSharpSummary, err := cSharpParser.Parse("Main.cs", []byte("using System;\nusing System.Text;\nclass C {}\n"))
+	if err != nil {
+		t.Fatalf("Parse C# returned error: %v", err)
+	}
+	if !hasImport(cSharpSummary, "using System;") || !hasImport(cSharpSummary, "using System.Text;") {
+		t.Fatalf("unexpected C# imports %v", cSharpSummary.Imports)
+	}
+
+	kotlinSummary, err := kotlinParser.Parse("Main.kt", []byte("import kotlin.collections.List;\nimport foo.bar.Baz;\nclass C\n"))
+	if err != nil {
+		t.Fatalf("Parse Kotlin returned error: %v", err)
+	}
+	if !hasImport(kotlinSummary, "import kotlin.collections.List;") || !hasImport(kotlinSummary, "import foo.bar.Baz;") {
+		t.Fatalf("unexpected Kotlin imports %v", kotlinSummary.Imports)
 	}
 }
 

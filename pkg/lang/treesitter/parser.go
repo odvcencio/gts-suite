@@ -642,23 +642,23 @@ func extractImportsByLanguage(language, nodeType, raw string, node *gotreesitter
 			}
 		}
 	case "python":
-		return parsePythonImport(raw)
+		return preserveWholeImport(raw, "import ", "from ")
 	case "javascript", "typescript", "tsx":
-		return parseJSImport(raw)
+		return preserveWholeImport(raw, "import ")
 	case "rust":
-		return parseRustImport(raw)
+		return preserveWholeImport(raw, "use ", "pub use ")
 	case "java":
-		return parseKeywordImport(raw, "import")
+		return preserveWholeImport(raw, "import ")
 	case "c", "cpp":
-		return parseCInclude(raw)
+		return preserveLineImports(raw, "#include")
 	case "c_sharp":
-		return parseKeywordImport(raw, "using")
+		return preserveWholeImport(raw, "using ", "global using ")
 	case "php":
-		return parseKeywordImport(raw, "use")
+		return preserveWholeImport(raw, "use ")
 	case "kotlin":
-		return parseKeywordImport(raw, "import")
+		return preserveLineImports(raw, "import ")
 	}
-	return []string{raw}
+	return preserveWholeImport(raw, "import ", "from ", "use ", "using ", "#include")
 }
 
 func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, src []byte) string {
@@ -680,108 +680,46 @@ func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, sr
 	return ""
 }
 
-func parsePythonImport(raw string) []string {
-	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
-	if strings.HasPrefix(line, "from ") {
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "from "))
-		module, _, _ := strings.Cut(rest, " import ")
-		module = strings.TrimSpace(module)
-		if module == "" {
-			return nil
-		}
-		return []string{module}
-	}
-	if strings.HasPrefix(line, "import ") {
-		rest := strings.TrimSpace(strings.TrimPrefix(line, "import "))
-		parts := strings.Split(rest, ",")
-		out := make([]string, 0, len(parts))
-		for _, part := range parts {
-			part = strings.TrimSpace(part)
-			if part == "" {
-				continue
-			}
-			if beforeAlias, _, found := strings.Cut(part, " as "); found {
-				part = strings.TrimSpace(beforeAlias)
-			}
-			if part != "" {
-				out = append(out, part)
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-func parseJSImport(raw string) []string {
+func preserveWholeImport(raw string, prefixes ...string) []string {
 	line := strings.TrimSpace(raw)
-	if idx := strings.Index(line, " from "); idx >= 0 {
-		if quoted := extractQuotedStrings(line[idx+len(" from "):]); len(quoted) > 0 {
-			return []string{quoted[0]}
-		}
-	}
-	quoted := extractQuotedStrings(line)
-	if len(quoted) == 0 {
-		return nil
-	}
-	return []string{quoted[0]}
-}
-
-func parseRustImport(raw string) []string {
-	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
-	line = strings.TrimSpace(strings.TrimPrefix(line, "pub "))
-	line = strings.TrimSpace(strings.TrimPrefix(line, "use "))
 	if line == "" {
 		return nil
 	}
-	if prefix, _, found := strings.Cut(line, "::"); found && strings.Contains(line, "{") {
-		line = strings.TrimSpace(prefix)
-	}
-	if beforeAlias, _, found := strings.Cut(line, " as "); found {
-		line = strings.TrimSpace(beforeAlias)
-	}
-	line = strings.TrimSpace(strings.TrimSuffix(line, "::"))
-	if line == "" {
-		return nil
-	}
-	return []string{line}
-}
-
-func parseKeywordImport(raw, keyword string) []string {
-	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
-	if !strings.HasPrefix(line, keyword+" ") {
-		return nil
-	}
-	line = strings.TrimSpace(strings.TrimPrefix(line, keyword+" "))
-	line = strings.TrimSpace(strings.TrimPrefix(line, "static "))
-	if line == "" {
-		return nil
-	}
-	if beforeAlias, _, found := strings.Cut(line, " as "); found {
-		line = strings.TrimSpace(beforeAlias)
-	}
-	line = strings.TrimSpace(strings.TrimSuffix(line, "::"))
-	if line == "" {
-		return nil
-	}
-	return []string{line}
-}
-
-func parseCInclude(raw string) []string {
-	raw = strings.TrimSpace(raw)
-	if !strings.HasPrefix(raw, "#include") {
-		return nil
-	}
-	rest := strings.TrimSpace(strings.TrimPrefix(raw, "#include"))
-	if strings.HasPrefix(rest, "<") && strings.Contains(rest, ">") {
-		return []string{strings.TrimSuffix(strings.TrimPrefix(rest, "<"), ">")}
-	}
-	if strings.HasPrefix(rest, "\"") && strings.Count(rest, "\"") >= 2 {
-		rest = strings.TrimPrefix(rest, "\"")
-		if idx := strings.Index(rest, "\""); idx >= 0 {
-			return []string{rest[:idx]}
-		}
+	if hasImportPrefix(line, prefixes...) {
+		return []string{line}
 	}
 	return nil
+}
+
+func preserveLineImports(raw string, prefixes ...string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	lines := strings.Split(raw, "\n")
+	out := make([]string, 0, len(lines))
+	for _, line := range lines {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if hasImportPrefix(line, prefixes...) {
+			out = append(out, line)
+		}
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+func hasImportPrefix(line string, prefixes ...string) bool {
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(line, prefix) {
+			return true
+		}
+	}
+	return false
 }
 
 func extractQuotedStrings(raw string) []string {
