@@ -67,6 +67,11 @@ type Graph struct {
 	incomingCount map[string]int
 }
 
+type importScope struct {
+	paths  map[string]struct{}
+	tokens map[string]struct{}
+}
+
 type Walk struct {
 	Roots   []Definition `json:"roots,omitempty"`
 	Nodes   []Definition `json:"nodes,omitempty"`
@@ -123,6 +128,7 @@ func Build(idx *model.Index) (Graph, error) {
 
 	for _, file := range idx.Files {
 		pkg := packageFromPath(file.Path)
+		scope := buildImportScope(file.Imports)
 		callablesInFile := callableByFile[file.Path]
 		for _, ref := range file.References {
 			if !isCallReference(ref.Kind) {
@@ -135,7 +141,7 @@ func Build(idx *model.Index) (Graph, error) {
 				continue
 			}
 
-			callee, resolution, reason, candidateCount, ok := resolveCallee(file.Path, pkg, ref.Name, callableByFileName, callableByPackageName, callableByName)
+			callee, resolution, reason, candidateCount, ok := resolveCallee(file.Path, pkg, ref.Name, scope, callableByFileName, callableByPackageName, callableByName)
 			if !ok {
 				callerCopy := *caller
 				unresolved = append(unresolved, unresolvedFromRef(file.Path, pkg, ref, &callerCopy, reason, candidateCount))
@@ -366,6 +372,7 @@ func (g Graph) Walk(rootIDs []string, depth int, reverse bool) Walk {
 
 func resolveCallee(
 	filePath, pkg, name string,
+	scope importScope,
 	callableByFileName map[string][]Definition,
 	callableByPackageName map[string][]Definition,
 	callableByName map[string][]Definition,
@@ -375,6 +382,13 @@ func resolveCallee(
 			return candidates[0], "file", "", 1, true
 		}
 		return Definition{}, "", "ambiguous_file", len(candidates), false
+	}
+
+	if candidates := candidatesByImportScope(uniqueDefinitions(callableByName[name]), scope); len(candidates) > 0 {
+		if len(candidates) == 1 {
+			return candidates[0], "import", "", 1, true
+		}
+		return Definition{}, "", "ambiguous_import", len(candidates), false
 	}
 
 	if candidates := uniqueDefinitions(callableByPackageName[keyPackageName(pkg, name)]); len(candidates) > 0 {
@@ -458,6 +472,90 @@ func isCallableKind(kind string) bool {
 	default:
 		return false
 	}
+}
+
+func buildImportScope(imports []string) importScope {
+	scope := importScope{
+		paths:  map[string]struct{}{},
+		tokens: map[string]struct{}{},
+	}
+	for _, imp := range imports {
+		imp = normalizeImportPath(imp)
+		if imp == "" {
+			continue
+		}
+		scope.paths[imp] = struct{}{}
+		for _, token := range splitImportTokens(imp) {
+			scope.tokens[token] = struct{}{}
+		}
+	}
+	return scope
+}
+
+func normalizeImportPath(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return ""
+	}
+	raw = strings.Trim(raw, "\"'`")
+	raw = strings.TrimSuffix(raw, ";")
+	return strings.TrimSpace(raw)
+}
+
+func splitImportTokens(path string) []string {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return nil
+	}
+	replacer := strings.NewReplacer("::", "/", ".", "/", "\\", "/", ":", "/")
+	normalized := replacer.Replace(path)
+	parts := strings.Split(normalized, "/")
+	out := make([]string, 0, len(parts))
+	for _, part := range parts {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		out = append(out, part)
+	}
+	return out
+}
+
+func candidatesByImportScope(candidates []Definition, scope importScope) []Definition {
+	if len(candidates) == 0 || (len(scope.paths) == 0 && len(scope.tokens) == 0) {
+		return nil
+	}
+
+	filtered := make([]Definition, 0, len(candidates))
+	for _, candidate := range candidates {
+		if definitionMatchesImportScope(candidate, scope) {
+			filtered = append(filtered, candidate)
+		}
+	}
+	return uniqueDefinitions(filtered)
+}
+
+func definitionMatchesImportScope(def Definition, scope importScope) bool {
+	pkg := filepath.ToSlash(filepath.Clean(strings.TrimSpace(def.Package)))
+	if pkg == "" || pkg == "." {
+		return false
+	}
+
+	if _, ok := scope.paths[pkg]; ok {
+		return true
+	}
+	for importPath := range scope.paths {
+		if strings.HasSuffix(importPath, "/"+pkg) || strings.HasSuffix(pkg, "/"+importPath) {
+			return true
+		}
+	}
+
+	for _, token := range splitImportTokens(pkg) {
+		if _, ok := scope.tokens[token]; ok {
+			return true
+		}
+	}
+	return false
 }
 
 func isCallReference(kind string) bool {

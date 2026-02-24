@@ -91,14 +91,109 @@ def helper():
 	if summary.Language != "python" {
 		t.Fatalf("expected language python, got %q", summary.Language)
 	}
-	if !hasSymbol(summary, "type_definition", "Worker") {
-		t.Fatal("expected type_definition Worker")
+	if !hasSymbol(summary, "class_definition", "Worker") && !hasSymbol(summary, "type_definition", "Worker") {
+		t.Fatal("expected class/type definition Worker")
 	}
 	if !hasSymbol(summary, "function_definition", "helper") {
 		t.Fatal("expected function_definition helper")
 	}
 	if !hasReference(summary, "reference.call", "run") {
 		t.Fatal("expected reference.call run")
+	}
+}
+
+func TestParsePythonImportsAndReceiver(t *testing.T) {
+	entry := findEntryByExtension(t, ".py")
+
+	parser, err := NewParser(entry)
+	if err != nil {
+		t.Fatalf("NewParser returned error: %v", err)
+	}
+
+	const source = `import os, sys
+from pathlib import Path
+
+class Worker:
+    def run(self):
+        return Path(".")
+`
+	summary, err := parser.Parse("main.py", []byte(source))
+	if err != nil {
+		t.Fatalf("Parse returned error: %v", err)
+	}
+	if !hasImport(summary, "os") || !hasImport(summary, "sys") || !hasImport(summary, "pathlib") {
+		t.Fatalf("unexpected imports %v", summary.Imports)
+	}
+
+	run := findSymbol(summary, "function_definition", "run")
+	if run == nil {
+		run = findSymbol(summary, "method_definition", "run")
+	}
+	if run == nil {
+		t.Fatalf("expected method/function symbol run")
+	}
+	if run.Receiver != "Worker" {
+		t.Fatalf("expected python receiver Worker, got %q", run.Receiver)
+	}
+}
+
+func TestParseJavaScriptAndTypeScriptImports(t *testing.T) {
+	jsEntry := findEntryByExtension(t, ".js")
+	tsEntry := findEntryByExtension(t, ".ts")
+
+	jsParser, err := NewParser(jsEntry)
+	if err != nil {
+		t.Fatalf("NewParser(js) returned error: %v", err)
+	}
+	tsParser, err := NewParser(tsEntry)
+	if err != nil {
+		t.Fatalf("NewParser(ts) returned error: %v", err)
+	}
+
+	jsSummary, err := jsParser.Parse("main.js", []byte(`import fs from "node:fs"; import {join} from "./util.js";`))
+	if err != nil {
+		t.Fatalf("Parse JS returned error: %v", err)
+	}
+	if !hasImport(jsSummary, "node:fs") || !hasImport(jsSummary, "./util.js") {
+		t.Fatalf("unexpected JS imports %v", jsSummary.Imports)
+	}
+
+	tsSummary, err := tsParser.Parse("main.ts", []byte(`import type {Config} from "./types"; import React from "react";`))
+	if err != nil {
+		t.Fatalf("Parse TS returned error: %v", err)
+	}
+	if !hasImport(tsSummary, "./types") || !hasImport(tsSummary, "react") {
+		t.Fatalf("unexpected TS imports %v", tsSummary.Imports)
+	}
+}
+
+func TestParseRustAndJavaImports(t *testing.T) {
+	rustEntry := findEntryByExtension(t, ".rs")
+	javaEntry := findEntryByExtension(t, ".java")
+
+	rustParser, err := NewParser(rustEntry)
+	if err != nil {
+		t.Fatalf("NewParser(rust) returned error: %v", err)
+	}
+	javaParser, err := NewParser(javaEntry)
+	if err != nil {
+		t.Fatalf("NewParser(java) returned error: %v", err)
+	}
+
+	rustSummary, err := rustParser.Parse("main.rs", []byte(`use std::io::{self, Read}; use crate::service::Worker;`))
+	if err != nil {
+		t.Fatalf("Parse Rust returned error: %v", err)
+	}
+	if !hasImport(rustSummary, "std") || !hasImport(rustSummary, "crate::service::Worker") {
+		t.Fatalf("unexpected Rust imports %v", rustSummary.Imports)
+	}
+
+	javaSummary, err := javaParser.Parse("Main.java", []byte(`import java.util.List; import static java.lang.Math.max; class Main {}`))
+	if err != nil {
+		t.Fatalf("Parse Java returned error: %v", err)
+	}
+	if !hasImport(javaSummary, "java.util.List") || !hasImport(javaSummary, "java.lang.Math.max") {
+		t.Fatalf("unexpected Java imports %v", javaSummary.Imports)
 	}
 }
 
@@ -306,6 +401,15 @@ func findSymbol(summary model.FileSummary, kind, name string) *model.Symbol {
 func hasReference(summary model.FileSummary, kind, name string) bool {
 	for _, reference := range summary.References {
 		if reference.Kind == kind && reference.Name == name {
+			return true
+		}
+	}
+	return false
+}
+
+func hasImport(summary model.FileSummary, importPath string) bool {
+	for _, imp := range summary.Imports {
+		if imp == importPath {
 			return true
 		}
 	}

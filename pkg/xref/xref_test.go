@@ -169,6 +169,98 @@ func TestBuildAmbiguousGlobalCall(t *testing.T) {
 	}
 }
 
+func TestBuildImportAwareResolutionPrefersImportedPackage(t *testing.T) {
+	idx := &model.Index{
+		Root: "/tmp/repo",
+		Files: []model.FileSummary{
+			{
+				Path: "alpha/a.go",
+				Symbols: []model.Symbol{
+					{File: "alpha/a.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path: "beta/b.go",
+				Symbols: []model.Symbol{
+					{File: "beta/b.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path:    "app/main.go",
+				Imports: []string{"alpha"},
+				Symbols: []model.Symbol{
+					{File: "app/main.go", Kind: "function_definition", Name: "Caller", StartLine: 1, EndLine: 3},
+				},
+				References: []model.Reference{
+					{File: "app/main.go", Kind: "reference.call", Name: "Foo", StartLine: 2, EndLine: 2, StartColumn: 2, EndColumn: 5},
+				},
+			},
+		},
+	}
+
+	graph, err := Build(idx)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(graph.Edges) != 1 {
+		t.Fatalf("expected 1 resolved edge, got %d", len(graph.Edges))
+	}
+	edge := graph.Edges[0]
+	if edge.Resolution != "import" {
+		t.Fatalf("expected resolution import, got %q", edge.Resolution)
+	}
+	if edge.Callee.Package != "alpha" {
+		t.Fatalf("expected callee package alpha, got %q", edge.Callee.Package)
+	}
+}
+
+func TestBuildImportAwareResolutionDetectsImportAmbiguity(t *testing.T) {
+	idx := &model.Index{
+		Root: "/tmp/repo",
+		Files: []model.FileSummary{
+			{
+				Path: "alpha/a.go",
+				Symbols: []model.Symbol{
+					{File: "alpha/a.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path: "beta/b.go",
+				Symbols: []model.Symbol{
+					{File: "beta/b.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path:    "app/main.go",
+				Imports: []string{"alpha", "beta"},
+				Symbols: []model.Symbol{
+					{File: "app/main.go", Kind: "function_definition", Name: "Caller", StartLine: 1, EndLine: 3},
+				},
+				References: []model.Reference{
+					{File: "app/main.go", Kind: "reference.call", Name: "Foo", StartLine: 2, EndLine: 2, StartColumn: 2, EndColumn: 5},
+				},
+			},
+		},
+	}
+
+	graph, err := Build(idx)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(graph.Edges) != 0 {
+		t.Fatalf("expected 0 resolved edges, got %d", len(graph.Edges))
+	}
+	if len(graph.Unresolved) != 1 {
+		t.Fatalf("expected 1 unresolved call, got %d", len(graph.Unresolved))
+	}
+	if graph.Unresolved[0].Reason != "ambiguous_import" {
+		t.Fatalf("unexpected unresolved reason %q", graph.Unresolved[0].Reason)
+	}
+	if graph.Unresolved[0].CandidateCount != 2 {
+		t.Fatalf("expected candidate count 2, got %d", graph.Unresolved[0].CandidateCount)
+	}
+}
+
 func TestBuildEmptyIndex(t *testing.T) {
 	idx := &model.Index{
 		Root:  "/tmp/empty",

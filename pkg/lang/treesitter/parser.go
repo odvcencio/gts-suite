@@ -149,7 +149,7 @@ func (p *Parser) buildSummaryFromTree(path string, src []byte, tree *gotreesitte
 	}
 	tags := p.tagger.TagTree(tree)
 	summary.Imports = p.extractImports(tree, src)
-	summary.Symbols = p.extractSymbols(src, tags)
+	summary.Symbols = p.extractSymbols(src, tree, tags)
 	summary.References = p.extractReferences(tags)
 	return summary
 }
@@ -161,7 +161,13 @@ func (p *Parser) parseTree(src []byte) (*gotreesitter.Tree, error) {
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
 		if ts != nil {
-			return parser.ParseWithTokenSource(src, ts)
+			tree, err := parser.ParseWithTokenSource(src, ts)
+			if err == nil && tree != nil && tree.RootNode() != nil && strings.TrimSpace(tree.RootNode().Type(p.lang)) != "" {
+				return tree, nil
+			}
+			if tree != nil {
+				tree.Release()
+			}
 		}
 	}
 	return parser.Parse(src)
@@ -178,7 +184,13 @@ func (p *Parser) parseTreeIncremental(src []byte, oldTree *gotreesitter.Tree) (*
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
 		if ts != nil {
-			return parser.ParseIncrementalWithTokenSource(src, oldTree, ts)
+			tree, err := parser.ParseIncrementalWithTokenSource(src, oldTree, ts)
+			if err == nil && tree != nil && tree.RootNode() != nil && strings.TrimSpace(tree.RootNode().Type(p.lang)) != "" {
+				return tree, nil
+			}
+			if tree != nil {
+				tree.Release()
+			}
 		}
 	}
 	return parser.ParseIncremental(src, oldTree)
@@ -200,19 +212,38 @@ func (p *Parser) releaseParser(parser *gotreesitter.Parser) {
 }
 
 func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {
-	if p.entry.Name != "go" {
+	if tree == nil || tree.RootNode() == nil {
 		return nil
 	}
 
 	imports := map[string]struct{}{}
+	add := func(value string) {
+		value = strings.TrimSpace(value)
+		if value == "" {
+			return
+		}
+		imports[value] = struct{}{}
+	}
+
 	gotreesitter.Walk(tree.RootNode(), func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
-		if node == nil || node.Type(p.lang) != "import_spec" {
+		if node == nil {
 			return gotreesitter.WalkContinue
 		}
-		path := importPathFromSpec(node, p.lang, src)
-		if path != "" {
-			imports[path] = struct{}{}
+
+		nodeType := node.Type(p.lang)
+		if ImportNodeTypes[nodeType] {
+			for _, imp := range extractImportsByLanguage(p.entry.Name, nodeType, strings.TrimSpace(node.Text(src)), node, p.lang, src) {
+				add(imp)
+			}
+			return gotreesitter.WalkContinue
 		}
+
+		if p.entry.Name == "ruby" && nodeType == "call" {
+			if imp := extractRubyRequireImport(strings.TrimSpace(node.Text(src))); imp != "" {
+				add(imp)
+			}
+		}
+
 		return gotreesitter.WalkContinue
 	})
 
@@ -227,7 +258,7 @@ func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {
 	return values
 }
 
-func (p *Parser) extractSymbols(src []byte, tags []gotreesitter.Tag) []model.Symbol {
+func (p *Parser) extractSymbols(src []byte, tree *gotreesitter.Tree, tags []gotreesitter.Tag) []model.Symbol {
 	if len(tags) == 0 {
 		return nil
 	}
@@ -235,7 +266,7 @@ func (p *Parser) extractSymbols(src []byte, tags []gotreesitter.Tag) []model.Sym
 	symbols := make([]model.Symbol, 0, len(tags))
 	seen := map[string]struct{}{}
 	for _, tag := range tags {
-		symbol, ok := symbolFromTag(src, tag)
+		symbol, ok := symbolFromTag(src, tree, p.lang, p.entry.Name, tag)
 		if !ok {
 			continue
 		}
@@ -299,7 +330,7 @@ func (p *Parser) extractReferences(tags []gotreesitter.Tag) []model.Reference {
 	return references
 }
 
-func symbolFromTag(src []byte, tag gotreesitter.Tag) (model.Symbol, bool) {
+func symbolFromTag(src []byte, tree *gotreesitter.Tree, lang *gotreesitter.Language, language string, tag gotreesitter.Tag) (model.Symbol, bool) {
 	kind, ok := mapTagKind(tag.Kind)
 	if !ok {
 		return model.Symbol{}, false
@@ -317,10 +348,7 @@ func symbolFromTag(src []byte, tag gotreesitter.Tag) (model.Symbol, bool) {
 	}
 
 	signature := summarizeSignature(rawRangeText(src, tag.Range))
-	receiver := ""
-	if kind == "method_definition" {
-		receiver = inferGoReceiver(signature)
-	}
+	receiver := inferReceiver(language, kind, signature, tree, lang, src, tag.Range)
 
 	return model.Symbol{
 		Kind:      kind,
@@ -369,10 +397,28 @@ func mapTagKind(tagKind string) (string, bool) {
 	}
 
 	switch strings.TrimPrefix(tagKind, "definition.") {
-	case "function", "constructor":
+	case "function":
 		return "function_definition", true
 	case "method":
 		return "method_definition", true
+	case "constructor":
+		return "constructor_definition", true
+	case "class":
+		return "class_definition", true
+	case "interface":
+		return "interface_definition", true
+	case "struct":
+		return "struct_definition", true
+	case "enum":
+		return "enum_definition", true
+	case "constant":
+		return "constant_definition", true
+	case "variable", "field", "property":
+		return "variable_definition", true
+	case "module", "namespace", "package":
+		return "module_definition", true
+	case "type", "typedef", "alias", "union":
+		return "type_definition", true
 	default:
 		return "type_definition", true
 	}
@@ -429,11 +475,153 @@ func inferGoReceiver(signature string) string {
 	return strings.TrimSpace(rest[:closing])
 }
 
+func inferReceiver(language, kind, signature string, tree *gotreesitter.Tree, lang *gotreesitter.Language, src []byte, rng gotreesitter.Range) string {
+	switch language {
+	case "go":
+		if kind == "method_definition" {
+			return inferGoReceiver(signature)
+		}
+	case "python":
+		return findEnclosingContainerName(tree, lang, src, rng, map[string]bool{"class_definition": true})
+	case "javascript", "typescript", "tsx":
+		return findEnclosingContainerName(tree, lang, src, rng, map[string]bool{"class_declaration": true, "class": true})
+	case "java", "c_sharp":
+		return findEnclosingContainerName(tree, lang, src, rng, map[string]bool{"class_declaration": true})
+	case "rust":
+		implNode := findEnclosingContainerNode(tree, lang, rng, map[string]bool{"impl_item": true})
+		if implNode == nil {
+			return ""
+		}
+		return extractRustImplReceiver(implNode.Text(src))
+	}
+	return ""
+}
+
+func findEnclosingContainerName(tree *gotreesitter.Tree, lang *gotreesitter.Language, src []byte, rng gotreesitter.Range, nodeTypes map[string]bool) string {
+	node := findEnclosingContainerNode(tree, lang, rng, nodeTypes)
+	if node == nil {
+		return ""
+	}
+	return firstIdentifierText(node, lang, src)
+}
+
+func findEnclosingContainerNode(tree *gotreesitter.Tree, lang *gotreesitter.Language, rng gotreesitter.Range, nodeTypes map[string]bool) *gotreesitter.Node {
+	if tree == nil || tree.RootNode() == nil || lang == nil {
+		return nil
+	}
+	var best *gotreesitter.Node
+	var bestSpan uint32
+	gotreesitter.Walk(tree.RootNode(), func(node *gotreesitter.Node, depth int) gotreesitter.WalkAction {
+		if node == nil {
+			return gotreesitter.WalkContinue
+		}
+		nodeType := node.Type(lang)
+		if !nodeTypes[nodeType] {
+			return gotreesitter.WalkContinue
+		}
+		if !nodeContainsRange(node, rng) {
+			return gotreesitter.WalkContinue
+		}
+		span := node.EndByte() - node.StartByte()
+		if best == nil || span < bestSpan {
+			best = node
+			bestSpan = span
+		}
+		return gotreesitter.WalkContinue
+	})
+	return best
+}
+
+func nodeContainsRange(node *gotreesitter.Node, rng gotreesitter.Range) bool {
+	if node == nil {
+		return false
+	}
+	return node.StartByte() <= rng.StartByte && node.EndByte() >= rng.EndByte
+}
+
+func firstIdentifierText(node *gotreesitter.Node, lang *gotreesitter.Language, src []byte) string {
+	if node == nil {
+		return ""
+	}
+	for i := 0; i < node.NamedChildCount(); i++ {
+		child := node.NamedChild(i)
+		nodeType := child.Type(lang)
+		if NameIdentifierTypes[nodeType] {
+			return strings.TrimSpace(child.Text(src))
+		}
+		if nested := firstIdentifierText(child, lang, src); nested != "" {
+			return nested
+		}
+	}
+	return ""
+}
+
+func extractRustImplReceiver(text string) string {
+	text = strings.TrimSpace(text)
+	if !strings.HasPrefix(text, "impl") {
+		return ""
+	}
+	text = strings.TrimSpace(strings.TrimPrefix(text, "impl"))
+	if strings.HasPrefix(text, "<") {
+		if idx := strings.Index(text, ">"); idx >= 0 && idx+1 < len(text) {
+			text = strings.TrimSpace(text[idx+1:])
+		}
+	}
+	if idx := strings.Index(text, "{"); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	if idx := strings.Index(text, " where "); idx >= 0 {
+		text = strings.TrimSpace(text[:idx])
+	}
+	if idx := strings.Index(text, " for "); idx >= 0 {
+		text = strings.TrimSpace(text[idx+len(" for "):])
+	}
+	text = strings.TrimSpace(strings.Trim(text, "&*()"))
+	if fields := strings.Fields(text); len(fields) > 0 {
+		return strings.Trim(fields[0], ",")
+	}
+	return ""
+}
+
+func extractImportsByLanguage(language, nodeType, raw string, node *gotreesitter.Node, lang *gotreesitter.Language, src []byte) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	switch language {
+	case "go":
+		if nodeType != "import_spec" {
+			return nil
+		}
+		if node != nil {
+			if importPath := importPathFromSpec(node, lang, src); importPath != "" {
+				return []string{importPath}
+			}
+		}
+	case "python":
+		return parsePythonImport(raw)
+	case "javascript", "typescript", "tsx":
+		return parseJSImport(raw)
+	case "rust":
+		return parseRustImport(raw)
+	case "java":
+		return parseKeywordImport(raw, "import")
+	case "c", "cpp":
+		return parseCInclude(raw)
+	case "c_sharp":
+		return parseKeywordImport(raw, "using")
+	case "php":
+		return parseKeywordImport(raw, "use")
+	case "kotlin":
+		return parseKeywordImport(raw, "import")
+	}
+	return []string{raw}
+}
+
 func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, src []byte) string {
 	if node == nil {
 		return ""
 	}
-
 	for i := node.ChildCount() - 1; i >= 0; i-- {
 		child := node.Child(i)
 		typeName := child.Type(lang)
@@ -447,6 +635,148 @@ func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, sr
 		}
 	}
 	return ""
+}
+
+func parsePythonImport(raw string) []string {
+	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
+	if strings.HasPrefix(line, "from ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "from "))
+		module, _, _ := strings.Cut(rest, " import ")
+		module = strings.TrimSpace(module)
+		if module == "" {
+			return nil
+		}
+		return []string{module}
+	}
+	if strings.HasPrefix(line, "import ") {
+		rest := strings.TrimSpace(strings.TrimPrefix(line, "import "))
+		parts := strings.Split(rest, ",")
+		out := make([]string, 0, len(parts))
+		for _, part := range parts {
+			part = strings.TrimSpace(part)
+			if part == "" {
+				continue
+			}
+			if beforeAlias, _, found := strings.Cut(part, " as "); found {
+				part = strings.TrimSpace(beforeAlias)
+			}
+			if part != "" {
+				out = append(out, part)
+			}
+		}
+		return out
+	}
+	return nil
+}
+
+func parseJSImport(raw string) []string {
+	line := strings.TrimSpace(raw)
+	if idx := strings.Index(line, " from "); idx >= 0 {
+		if quoted := extractQuotedStrings(line[idx+len(" from "):]); len(quoted) > 0 {
+			return []string{quoted[0]}
+		}
+	}
+	quoted := extractQuotedStrings(line)
+	if len(quoted) == 0 {
+		return nil
+	}
+	return []string{quoted[0]}
+}
+
+func parseRustImport(raw string) []string {
+	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "pub "))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "use "))
+	if line == "" {
+		return nil
+	}
+	if prefix, _, found := strings.Cut(line, "::"); found && strings.Contains(line, "{") {
+		line = strings.TrimSpace(prefix)
+	}
+	if beforeAlias, _, found := strings.Cut(line, " as "); found {
+		line = strings.TrimSpace(beforeAlias)
+	}
+	line = strings.TrimSpace(strings.TrimSuffix(line, "::"))
+	if line == "" {
+		return nil
+	}
+	return []string{line}
+}
+
+func parseKeywordImport(raw, keyword string) []string {
+	line := strings.TrimSpace(strings.TrimSuffix(raw, ";"))
+	if !strings.HasPrefix(line, keyword+" ") {
+		return nil
+	}
+	line = strings.TrimSpace(strings.TrimPrefix(line, keyword+" "))
+	line = strings.TrimSpace(strings.TrimPrefix(line, "static "))
+	if line == "" {
+		return nil
+	}
+	if beforeAlias, _, found := strings.Cut(line, " as "); found {
+		line = strings.TrimSpace(beforeAlias)
+	}
+	line = strings.TrimSpace(strings.TrimSuffix(line, "::"))
+	if line == "" {
+		return nil
+	}
+	return []string{line}
+}
+
+func parseCInclude(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "#include") {
+		return nil
+	}
+	rest := strings.TrimSpace(strings.TrimPrefix(raw, "#include"))
+	if strings.HasPrefix(rest, "<") && strings.Contains(rest, ">") {
+		return []string{strings.TrimSuffix(strings.TrimPrefix(rest, "<"), ">")}
+	}
+	if strings.HasPrefix(rest, "\"") && strings.Count(rest, "\"") >= 2 {
+		rest = strings.TrimPrefix(rest, "\"")
+		if idx := strings.Index(rest, "\""); idx >= 0 {
+			return []string{rest[:idx]}
+		}
+	}
+	return nil
+}
+
+func extractQuotedStrings(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for i := 0; i < len(raw); i++ {
+		quote := raw[i]
+		if quote != '\'' && quote != '"' && quote != '`' {
+			continue
+		}
+		start := i + 1
+		for j := start; j < len(raw); j++ {
+			if raw[j] == '\\' {
+				j++
+				continue
+			}
+			if raw[j] == quote {
+				out = append(out, raw[start:j])
+				i = j
+				break
+			}
+		}
+	}
+	return out
+}
+
+func extractRubyRequireImport(raw string) string {
+	raw = strings.TrimSpace(raw)
+	if !strings.HasPrefix(raw, "require") {
+		return ""
+	}
+	quoted := extractQuotedStrings(raw)
+	if len(quoted) == 0 {
+		return ""
+	}
+	return quoted[0]
 }
 
 func singleEdit(oldSrc, newSrc []byte) (gotreesitter.InputEdit, bool) {
