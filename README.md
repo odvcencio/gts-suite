@@ -133,3 +133,44 @@ Supported kinds in this version:
   - Shipped: MCP stdio server command (`gtsmcp`) with tool calls for grep/map/query/refs/context/scope/deps/callgraph/dead/chunk/lint/refactor/diff.
   - Shipped: normalized strict tool schemas and per-call `_meta` diagnostics in MCP responses.
   - Next: add streaming progress notifications for long-running tool calls.
+
+## MCP client setup examples
+
+### Claude Desktop
+
+```json
+{
+  "mcpServers": {
+    "gts": {
+      "command": "gts",
+      "args": ["gtsmcp", "--root", "/absolute/path/to/repo"]
+    }
+  }
+}
+```
+
+### Cursor
+
+```json
+{
+  "mcpServers": {
+    "gts": {
+      "command": "gts",
+      "args": ["gtsmcp", "--root", "/absolute/path/to/repo"]
+    }
+  }
+}
+```
+
+### VS Code (MCP-compatible extension)
+
+```json
+{
+  "mcpServers": {
+    "gts": {
+      "command": "gts",
+      "args": ["gtsmcp", "--root", "${workspaceFolder}"]
+    }
+  }
+}
+```
