@@ -22,6 +22,7 @@ type Parser struct {
 	tagger *gotreesitter.Tagger
 }
 
+// NewParser creates a Parser for the language described by the given LangEntry.
 func NewParser(entry grammars.LangEntry) (*Parser, error) {
 	if strings.TrimSpace(entry.Name) == "" {
 		return nil, fmt.Errorf("language entry name is required")
@@ -63,6 +64,7 @@ func (p *Parser) Parse(path string, src []byte) (model.FileSummary, error) {
 	return summary, err
 }
 
+// ParseWithTree parses a source file and returns its structural summary along with the AST.
 func (p *Parser) ParseWithTree(path string, src []byte) (model.FileSummary, *gotreesitter.Tree, error) {
 	summary := model.FileSummary{
 		Path:     path,
@@ -80,6 +82,7 @@ func (p *Parser) ParseWithTree(path string, src []byte) (model.FileSummary, *got
 	return p.buildSummaryFromTree(path, src, tree), tree, nil
 }
 
+// ParseIncrementalWithTree re-parses a source file incrementally using a previous tree and source.
 func (p *Parser) ParseIncrementalWithTree(path string, src, oldSrc []byte, oldTree *gotreesitter.Tree) (model.FileSummary, *gotreesitter.Tree, error) {
 	summary := model.FileSummary{
 		Path:     path,

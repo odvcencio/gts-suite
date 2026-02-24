@@ -3,6 +3,7 @@ package model
 
 import "time"
 
+// Symbol represents a top-level declaration (function, method, type) in a source file.
 type Symbol struct {
 	File      string `json:"file"`
 	Kind      string `json:"kind"`
@@ -13,6 +14,7 @@ type Symbol struct {
 	EndLine   int    `json:"end_line"`
 }
 
+// Reference represents a usage of a symbol at a specific source location.
 type Reference struct {
 	File        string `json:"file"`
 	Kind        string `json:"kind"`
@@ -23,6 +25,7 @@ type Reference struct {
 	EndColumn   int    `json:"end_column,omitempty"`
 }
 
+// FileSummary contains the structural analysis of a single source file.
 type FileSummary struct {
 	Path            string      `json:"path"`
 	Language        string      `json:"language"`
@@ -33,11 +36,13 @@ type FileSummary struct {
 	References      []Reference `json:"references,omitempty"`
 }
 
+// ParseError records a file that failed to parse.
 type ParseError struct {
 	Path  string `json:"path"`
 	Error string `json:"error"`
 }
 
+// Index is a structural snapshot of a codebase containing file summaries and parse errors.
 type Index struct {
 	Version     string        `json:"version"`
 	Root        string        `json:"root"`
@@ -46,6 +51,7 @@ type Index struct {
 	Errors      []ParseError  `json:"errors,omitempty"`
 }
 
+// FileCount returns the number of successfully parsed files in the index.
 func (idx *Index) FileCount() int {
 	if idx == nil {
 		return 0
@@ -53,6 +59,7 @@ func (idx *Index) FileCount() int {
 	return len(idx.Files)
 }
 
+// SymbolCount returns the total number of symbols across all files in the index.
 func (idx *Index) SymbolCount() int {
 	if idx == nil {
 		return 0
@@ -65,6 +72,7 @@ func (idx *Index) SymbolCount() int {
 	return total
 }
 
+// ReferenceCount returns the total number of references across all files in the index.
 func (idx *Index) ReferenceCount() int {
 	if idx == nil {
 		return 0

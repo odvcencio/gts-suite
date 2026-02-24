@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 	"testing"
 )
 
@@ -180,6 +181,193 @@ func decodeFramedJSON(t *testing.T, data []byte) (map[string]any, []byte) {
 		t.Fatalf("io.ReadAll failed: %v", err)
 	}
 	return parsed, remaining
+}
+
+func TestServerMalformedJSON(t *testing.T) {
+	service := NewService(".", "")
+
+	// Send garbage bytes with proper Content-Length framing.
+	garbage := []byte("this is not json{{{")
+	raw := "Content-Length: " + intToString(len(garbage)) + "\r\n\r\n" + string(garbage)
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, bytes.NewReader([]byte(raw)), output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	code := rpcErr["code"].(float64)
+	if int(code) != -32700 {
+		t.Fatalf("expected error code -32700 (Parse error), got %d", int(code))
+	}
+}
+
+func TestServerEmptyMethod(t *testing.T) {
+	service := NewService(".", "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "",
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	code := rpcErr["code"].(float64)
+	if int(code) != -32600 {
+		t.Fatalf("expected error code -32600 (Invalid Request), got %d", int(code))
+	}
+}
+
+func TestServerUnknownMethod(t *testing.T) {
+	service := NewService(".", "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "bogus/method",
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	code := rpcErr["code"].(float64)
+	if int(code) != -32601 {
+		t.Fatalf("expected error code -32601 (Method not found), got %d", int(code))
+	}
+	msg := rpcErr["message"].(string)
+	if !strings.Contains(msg, "bogus/method") {
+		t.Fatalf("expected error message to reference method name, got %q", msg)
+	}
+}
+
+func TestServerUnknownTool(t *testing.T) {
+	service := NewService(".", "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name": "nonexistent_tool",
+		},
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	// Unknown tool returns a result with isError=true, not an RPC-level error.
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result map, got %#v", resp)
+	}
+	if isError, ok := result["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true, got %#v", result["isError"])
+	}
+	content, ok := result["content"].([]any)
+	if !ok || len(content) == 0 {
+		t.Fatalf("expected non-empty content, got %#v", result["content"])
+	}
+	firstContent := content[0].(map[string]any)
+	text := firstContent["text"].(string)
+	if !strings.Contains(text, "nonexistent_tool") {
+		t.Fatalf("expected error text to reference tool name, got %q", text)
+	}
+}
+
+func TestServerMissingParams(t *testing.T) {
+	service := NewService(".", "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		// No "params" field at all.
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	// decodeParams with empty raw returns nil error, so params.Name is "",
+	// which triggers the "missing tool name" rpcError (-32602).
+	rpcErr, ok := resp["error"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected error response, got %#v", resp)
+	}
+	code := rpcErr["code"].(float64)
+	if int(code) != -32602 {
+		t.Fatalf("expected error code -32602 (Invalid params), got %d", int(code))
+	}
+}
+
+func TestServerToolCallError(t *testing.T) {
+	// gts_refs requires "name" argument. Calling it with an empty name on an
+	// empty directory will exercise the tool's error path.
+	service := NewService(t.TempDir(), "")
+
+	requests := bytes.NewBuffer(nil)
+	appendFramedJSON(t, requests, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      1,
+		"method":  "tools/call",
+		"params": map[string]any{
+			"name":      "gts_grep",
+			"arguments": map[string]any{
+				// selector is required but intentionally invalid.
+				"selector": "###INVALID###",
+			},
+		},
+	})
+
+	output := bytes.NewBuffer(nil)
+	if err := RunStdio(service, requests, output, bytes.NewBuffer(nil)); err != nil {
+		t.Fatalf("RunStdio returned error: %v", err)
+	}
+
+	resp, _ := decodeFramedJSON(t, output.Bytes())
+	result, ok := resp["result"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected result map, got %#v", resp)
+	}
+	if isError, ok := result["isError"].(bool); !ok || !isError {
+		t.Fatalf("expected isError=true for tool error, got %#v", result["isError"])
+	}
+	meta, ok := result["_meta"].(map[string]any)
+	if !ok {
+		t.Fatalf("expected _meta map, got %T", result["_meta"])
+	}
+	if okValue, ok := meta["ok"].(bool); !ok || okValue {
+		t.Fatalf("expected _meta.ok=false, got %#v", meta["ok"])
+	}
 }
 
 func stringsReader(value string) *bytes.Reader {
