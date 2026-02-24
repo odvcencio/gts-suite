@@ -103,14 +103,18 @@ func (s *Service) callQuery(args map[string]any) (any, error) {
 		}
 
 		var tree *gotreesitter.Tree
+		var parseErr error
 		if entry.TokenSourceFactory != nil {
 			tokenSource := entry.TokenSourceFactory(source, lang)
 			if tokenSource != nil {
-				tree = parser.ParseWithTokenSource(source, tokenSource)
+				tree, parseErr = parser.ParseWithTokenSource(source, tokenSource)
 			}
 		}
-		if tree == nil {
-			tree = parser.Parse(source)
+		if tree == nil && parseErr == nil {
+			tree, parseErr = parser.Parse(source)
+		}
+		if parseErr != nil {
+			continue
 		}
 		if tree == nil || tree.RootNode() == nil {
 			continue

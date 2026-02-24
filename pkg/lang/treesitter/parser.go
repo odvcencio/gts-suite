@@ -74,7 +74,10 @@ func (p *Parser) ParseWithTree(path string, src []byte) (model.FileSummary, *got
 		return summary, gotreesitter.NewTree(nil, src, p.lang), nil
 	}
 
-	tree := p.parseTree(src)
+	tree, err := p.parseTree(src)
+	if err != nil {
+		return summary, nil, fmt.Errorf("parse %s: %w", path, err)
+	}
 	if tree == nil || tree.RootNode() == nil {
 		return summary, tree, nil
 	}
@@ -126,7 +129,10 @@ func (p *Parser) parseIncrementalTree(path string, src []byte, oldTree *gotreesi
 		Language: p.Language(),
 	}
 
-	tree := p.parseTreeIncremental(src, oldTree)
+	tree, err := p.parseTreeIncremental(src, oldTree)
+	if err != nil {
+		return summary, nil, fmt.Errorf("incremental parse %s: %w", path, err)
+	}
 	if tree == nil || tree.RootNode() == nil {
 		return summary, tree, nil
 	}
@@ -145,7 +151,7 @@ func (p *Parser) buildSummaryFromTree(path string, src []byte, tree *gotreesitte
 	return summary
 }
 
-func (p *Parser) parseTree(src []byte) *gotreesitter.Tree {
+func (p *Parser) parseTree(src []byte) (*gotreesitter.Tree, error) {
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
 		if ts != nil {
@@ -155,7 +161,7 @@ func (p *Parser) parseTree(src []byte) *gotreesitter.Tree {
 	return p.parser.Parse(src)
 }
 
-func (p *Parser) parseTreeIncremental(src []byte, oldTree *gotreesitter.Tree) *gotreesitter.Tree {
+func (p *Parser) parseTreeIncremental(src []byte, oldTree *gotreesitter.Tree) (*gotreesitter.Tree, error) {
 	if oldTree == nil {
 		return p.parseTree(src)
 	}
