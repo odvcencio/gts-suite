@@ -8,8 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	"gts-suite/pkg/model"
-	"gts-suite/pkg/xref"
+	"github.com/odvcencio/gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
 type Options struct {

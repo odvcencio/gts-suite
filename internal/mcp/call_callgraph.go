@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"gts-suite/pkg/xref"
+	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
 func (s *Service) callCallgraph(args map[string]any) (any, error) {

@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/contextpack"
+	"github.com/odvcencio/gts-suite/internal/contextpack"
 )
 
 func newContextCmd() *cobra.Command {

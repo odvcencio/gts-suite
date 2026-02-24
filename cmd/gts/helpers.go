@@ -5,9 +5,9 @@ import (
 	"os"
 	"strings"
 
-	"gts-suite/pkg/index"
-	"gts-suite/pkg/model"
-	"gts-suite/pkg/xref"
+	"github.com/odvcencio/gts-suite/pkg/index"
+	"github.com/odvcencio/gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
 func loadOrBuild(cachePath string, target string) (*model.Index, error) {

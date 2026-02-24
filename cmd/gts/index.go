@@ -13,10 +13,10 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/pkg/ignore"
-	"gts-suite/pkg/index"
-	"gts-suite/pkg/model"
-	"gts-suite/pkg/structdiff"
+	"github.com/odvcencio/gts-suite/pkg/ignore"
+	"github.com/odvcencio/gts-suite/pkg/index"
+	"github.com/odvcencio/gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/structdiff"
 )
 
 func newIndexCmd() *cobra.Command {

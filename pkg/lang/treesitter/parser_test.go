@@ -8,7 +8,7 @@ import (
 
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 func TestParseGoSymbolsAndImports(t *testing.T) {

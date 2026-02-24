@@ -5,7 +5,7 @@ import (
 	"os"
 	"path/filepath"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 func Save(path string, idx *model.Index) error {

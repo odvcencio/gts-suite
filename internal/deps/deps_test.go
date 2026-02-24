@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 func TestBuildPackageMode(t *testing.T) {

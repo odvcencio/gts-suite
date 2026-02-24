@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/pkg/structdiff"
+	"github.com/odvcencio/gts-suite/pkg/structdiff"
 )
 
 func newDiffCmd() *cobra.Command {

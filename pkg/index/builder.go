@@ -15,10 +15,10 @@ import (
 
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"gts-suite/pkg/ignore"
-	"gts-suite/pkg/lang"
-	"gts-suite/pkg/lang/treesitter"
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/ignore"
+	"github.com/odvcencio/gts-suite/pkg/lang"
+	"github.com/odvcencio/gts-suite/pkg/lang/treesitter"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 const schemaVersion = "0.1.0"

@@ -7,7 +7,7 @@ import (
 	"strconv"
 	"strings"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 var validKind = regexp.MustCompile(`^(?:\*|[a-z_][a-z0-9_]*)$`)

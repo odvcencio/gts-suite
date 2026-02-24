@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	"gts-suite/pkg/index"
+	"github.com/odvcencio/gts-suite/pkg/index"
 )
 
 func TestBuild_CollectsFunctionScope(t *testing.T) {

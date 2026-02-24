@@ -1,7 +1,7 @@
 // Package lang defines the Parser interface for language-specific source file parsing.
 package lang
 
-import "gts-suite/pkg/model"
+import "github.com/odvcencio/gts-suite/pkg/model"
 
 type Parser interface {
 	Language() string

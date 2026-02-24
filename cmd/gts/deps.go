@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/deps"
+	"github.com/odvcencio/gts-suite/internal/deps"
 )
 
 func newDepsCmd() *cobra.Command {

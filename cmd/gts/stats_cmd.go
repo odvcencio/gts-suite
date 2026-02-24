@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/stats"
+	"github.com/odvcencio/gts-suite/internal/stats"
 )
 
 func newStatsCmd() *cobra.Command {

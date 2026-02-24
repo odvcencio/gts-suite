@@ -3,8 +3,8 @@ package mcp
 import (
 	"fmt"
 
-	"gts-suite/pkg/query"
-	"gts-suite/pkg/refactor"
+	"github.com/odvcencio/gts-suite/pkg/query"
+	"github.com/odvcencio/gts-suite/pkg/refactor"
 )
 
 func (s *Service) callRefactor(args map[string]any) (any, error) {

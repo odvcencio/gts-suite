@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/chunk"
+	"github.com/odvcencio/gts-suite/internal/chunk"
 )
 
 func newChunkCmd() *cobra.Command {

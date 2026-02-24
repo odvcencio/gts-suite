@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/mcp"
+	"github.com/odvcencio/gts-suite/internal/mcp"
 )
 
 func newMCPCmd() *cobra.Command {

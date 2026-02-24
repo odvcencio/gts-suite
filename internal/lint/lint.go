@@ -13,7 +13,7 @@ import (
 	"github.com/odvcencio/gotreesitter"
 	"github.com/odvcencio/gotreesitter/grammars"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 var maxLinesRulePattern = regexp.MustCompile(`(?i)^\s*no\s+([a-z_]+)s?\s+longer\s+than\s+(\d+)\s+lines?\s*$`)

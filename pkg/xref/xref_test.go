@@ -3,7 +3,7 @@ package xref
 import (
 	"testing"
 
-	"gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/model"
 )
 
 func TestBuildAndWalk(t *testing.T) {

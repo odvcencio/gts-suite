@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"gts-suite/internal/files"
+	"github.com/odvcencio/gts-suite/internal/files"
 )
 
 func (s *Service) callFiles(args map[string]any) (any, error) {

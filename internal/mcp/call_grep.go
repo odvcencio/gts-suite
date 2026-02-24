@@ -3,7 +3,7 @@ package mcp
 import (
 	"sort"
 
-	"gts-suite/pkg/query"
+	"github.com/odvcencio/gts-suite/pkg/query"
 )
 
 func (s *Service) callGrep(args map[string]any) (any, error) {

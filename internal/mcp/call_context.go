@@ -1,7 +1,7 @@
 package mcp
 
 import (
-	"gts-suite/internal/contextpack"
+	"github.com/odvcencio/gts-suite/internal/contextpack"
 )
 
 func (s *Service) callContext(args map[string]any) (any, error) {

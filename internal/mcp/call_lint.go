@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	"gts-suite/internal/lint"
+	"github.com/odvcencio/gts-suite/internal/lint"
 )
 
 func (s *Service) callLint(args map[string]any) (any, error) {

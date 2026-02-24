@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	gtsscope "gts-suite/internal/scope"
+	gtsscope "github.com/odvcencio/gts-suite/internal/scope"
 )
 
 func newScopeCmd() *cobra.Command {

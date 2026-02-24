@@ -6,7 +6,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/bridge"
+	"github.com/odvcencio/gts-suite/internal/bridge"
 )
 
 func newBridgeCmd() *cobra.Command {

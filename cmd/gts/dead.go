@@ -7,7 +7,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/pkg/xref"
+	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
 func newDeadCmd() *cobra.Command {

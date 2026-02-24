@@ -8,15 +8,15 @@ import (
 	"strings"
 	"testing"
 
-	"gts-suite/internal/bridge"
-	"gts-suite/internal/chunk"
-	"gts-suite/internal/contextpack"
-	"gts-suite/internal/deps"
-	"gts-suite/internal/files"
-	"gts-suite/pkg/refactor"
-	"gts-suite/internal/stats"
-	"gts-suite/pkg/structdiff"
-	"gts-suite/pkg/xref"
+	"github.com/odvcencio/gts-suite/internal/bridge"
+	"github.com/odvcencio/gts-suite/internal/chunk"
+	"github.com/odvcencio/gts-suite/internal/contextpack"
+	"github.com/odvcencio/gts-suite/internal/deps"
+	"github.com/odvcencio/gts-suite/internal/files"
+	"github.com/odvcencio/gts-suite/pkg/refactor"
+	"github.com/odvcencio/gts-suite/internal/stats"
+	"github.com/odvcencio/gts-suite/pkg/structdiff"
+	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
 func TestServiceToolsIncludesCoreRoadmapTools(t *testing.T) {

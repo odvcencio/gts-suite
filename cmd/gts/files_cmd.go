@@ -5,7 +5,7 @@ import (
 
 	"github.com/spf13/cobra"
 
-	"gts-suite/internal/files"
+	"github.com/odvcencio/gts-suite/internal/files"
 )
 
 func newFilesCmd() *cobra.Command {
