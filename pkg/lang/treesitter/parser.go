@@ -7,6 +7,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
 	"unicode/utf8"
 
 	"github.com/odvcencio/gotreesitter"
@@ -16,10 +17,10 @@ import (
 )
 
 type Parser struct {
-	entry  grammars.LangEntry
-	lang   *gotreesitter.Language
-	parser *gotreesitter.Parser
-	tagger *gotreesitter.Tagger
+	entry      grammars.LangEntry
+	lang       *gotreesitter.Language
+	parserPool sync.Pool
+	tagger     *gotreesitter.Tagger
 }
 
 // NewParser creates a Parser for the language described by the given LangEntry.
@@ -47,8 +48,10 @@ func NewParser(entry grammars.LangEntry) (*Parser, error) {
 	return &Parser{
 		entry:  entry,
 		lang:   lang,
-		parser: gotreesitter.NewParser(lang),
 		tagger: tagger,
+		parserPool: sync.Pool{
+			New: func() any { return gotreesitter.NewParser(lang) },
+		},
 	}, nil
 }
 
@@ -152,26 +155,48 @@ func (p *Parser) buildSummaryFromTree(path string, src []byte, tree *gotreesitte
 }
 
 func (p *Parser) parseTree(src []byte) (*gotreesitter.Tree, error) {
+	parser := p.acquireParser()
+	defer p.releaseParser(parser)
+
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
 		if ts != nil {
-			return p.parser.ParseWithTokenSource(src, ts)
+			return parser.ParseWithTokenSource(src, ts)
 		}
 	}
-	return p.parser.Parse(src)
+	return parser.Parse(src)
 }
 
 func (p *Parser) parseTreeIncremental(src []byte, oldTree *gotreesitter.Tree) (*gotreesitter.Tree, error) {
 	if oldTree == nil {
 		return p.parseTree(src)
 	}
+
+	parser := p.acquireParser()
+	defer p.releaseParser(parser)
+
 	if p.entry.TokenSourceFactory != nil {
 		ts := p.entry.TokenSourceFactory(src, p.lang)
 		if ts != nil {
-			return p.parser.ParseIncrementalWithTokenSource(src, oldTree, ts)
+			return parser.ParseIncrementalWithTokenSource(src, oldTree, ts)
 		}
 	}
-	return p.parser.ParseIncremental(src, oldTree)
+	return parser.ParseIncremental(src, oldTree)
+}
+
+func (p *Parser) acquireParser() *gotreesitter.Parser {
+	candidate := p.parserPool.Get()
+	if parser, ok := candidate.(*gotreesitter.Parser); ok && parser != nil {
+		return parser
+	}
+	return gotreesitter.NewParser(p.lang)
+}
+
+func (p *Parser) releaseParser(parser *gotreesitter.Parser) {
+	if parser == nil {
+		return
+	}
+	p.parserPool.Put(parser)
 }
 
 func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {

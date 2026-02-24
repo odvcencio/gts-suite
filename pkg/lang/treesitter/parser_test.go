@@ -1,9 +1,11 @@
 package treesitter
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 
 	"github.com/odvcencio/gotreesitter/grammars"
@@ -223,6 +225,51 @@ func TestParseIncrementalWithTree_FileIntegration(t *testing.T) {
 	}
 	if newTree != tree {
 		newTree.Release()
+	}
+}
+
+func TestParserConcurrentParse(t *testing.T) {
+	entry := findEntryByExtension(t, ".go")
+	parser, err := NewParser(entry)
+	if err != nil {
+		t.Fatalf("NewParser returned error: %v", err)
+	}
+
+	source := []byte(`package demo
+
+type Service struct{}
+
+func Handle() {
+	println("ok")
+}
+`)
+
+	const workers = 16
+	const iterations = 40
+
+	var wg sync.WaitGroup
+	errCh := make(chan error, workers)
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+			for i := 0; i < iterations; i++ {
+				summary, parseErr := parser.Parse(fmt.Sprintf("w%d_%d.go", worker, i), source)
+				if parseErr != nil {
+					errCh <- parseErr
+					return
+				}
+				if !hasSymbol(summary, "function_definition", "Handle") {
+					errCh <- fmt.Errorf("missing Handle symbol for worker=%d iteration=%d", worker, i)
+					return
+				}
+			}
+		}(worker)
+	}
+	wg.Wait()
+	close(errCh)
+	for err := range errCh {
+		t.Fatal(err)
 	}
 }
 
