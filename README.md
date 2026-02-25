@@ -1,6 +1,6 @@
 # gts-suite
 
-Bootstrap implementation of a gotreesitter-style CLI suite with shared indexing primitives.
+Bootstrap implementation of a structural CLI suite powered by [gotreesitter](https://github.com/odvcencio/gotreesitter), with shared indexing primitives.
 
 ## Implemented commands
 
