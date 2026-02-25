@@ -48,6 +48,32 @@ func TestServiceInitialize(t *testing.T) {
 	}
 }
 
+func TestServiceGoToDefinition(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "main.go"), []byte(
+		"package main\n\nimport \"fmt\"\n\nfunc main() {\n\tfmt.Println(\"hello\")\n}\n",
+	), 0644)
+
+	input := lspRequest(1, "initialize", map[string]string{"rootUri": "file://" + dir})
+	input += lspNotify("initialized", struct{}{})
+	input += lspRequest(2, "textDocument/definition", map[string]any{
+		"textDocument": map[string]string{"uri": "file://" + filepath.Join(dir, "main.go")},
+		"position":     map[string]int{"line": 4, "character": 5},
+	})
+	input += lspRequest(3, "shutdown", nil)
+
+	var out bytes.Buffer
+	svc := NewService()
+	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
+	svc.Register(srv)
+	srv.Serve()
+
+	resp := out.String()
+	if !strings.Contains(resp, `"uri"`) {
+		t.Errorf("expected definition location with uri, got: %s", resp)
+	}
+}
+
 func TestServiceDocumentSymbols(t *testing.T) {
 	dir := t.TempDir()
 	goFile := filepath.Join(dir, "main.go")

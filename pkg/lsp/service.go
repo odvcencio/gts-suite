@@ -30,6 +30,8 @@ func (s *Service) Register(srv *Server) {
 	srv.Handle("shutdown", s.handleShutdown)
 	srv.Handle("textDocument/documentSymbol", s.handleDocumentSymbol)
 	srv.Handle("workspace/symbol", s.handleWorkspaceSymbol)
+	srv.Handle("textDocument/definition", s.handleDefinition)
+	srv.Handle("textDocument/references", s.handleReferences)
 
 	srv.OnNotify("initialized", func(params json.RawMessage) {
 		s.buildIndex()
@@ -160,6 +162,110 @@ func (s *Service) handleDidSave(params json.RawMessage) {
 	s.mu.Lock()
 	s.idx = newIdx
 	s.mu.Unlock()
+}
+
+func (s *Service) handleDefinition(params json.RawMessage) (any, error) {
+	var p struct {
+		TextDocument TextDocumentIdentifier `json:"textDocument"`
+		Position     Position               `json:"position"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	path := uriToPath(p.TextDocument.URI)
+	relPath := relativeTo(path, s.rootPath)
+	line := p.Position.Line + 1 // LSP is 0-based, model is 1-based
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return nil, nil
+	}
+
+	// Find the symbol at the cursor position
+	symbolName := s.symbolNameAtPosition(relPath, line, p.Position.Character)
+	if symbolName == "" {
+		return nil, nil
+	}
+
+	// Search for matching definition across the index
+	for _, f := range s.idx.Files {
+		for _, sym := range f.Symbols {
+			if sym.Name == symbolName {
+				return LSPLocation{
+					URI:   pathToURI(f.Path, s.rootPath),
+					Range: symbolRange(sym),
+				}, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (s *Service) handleReferences(params json.RawMessage) (any, error) {
+	var p struct {
+		TextDocument TextDocumentIdentifier `json:"textDocument"`
+		Position     Position               `json:"position"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	path := uriToPath(p.TextDocument.URI)
+	relPath := relativeTo(path, s.rootPath)
+	line := p.Position.Line + 1
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return []LSPLocation{}, nil
+	}
+
+	symbolName := s.symbolNameAtPosition(relPath, line, p.Position.Character)
+	if symbolName == "" {
+		return []LSPLocation{}, nil
+	}
+
+	var locs []LSPLocation
+	for _, f := range s.idx.Files {
+		for _, ref := range f.References {
+			if ref.Name == symbolName {
+				locs = append(locs, LSPLocation{
+					URI: pathToURI(f.Path, s.rootPath),
+					Range: Range{
+						Start: Position{Line: ref.StartLine - 1, Character: ref.StartColumn},
+						End:   Position{Line: ref.EndLine - 1, Character: ref.EndColumn},
+					},
+				})
+			}
+		}
+	}
+	return locs, nil
+}
+
+// symbolNameAtPosition finds the symbol/reference name at a given cursor position.
+func (s *Service) symbolNameAtPosition(relPath string, line, col int) string {
+	for _, f := range s.idx.Files {
+		if f.Path != relPath {
+			continue
+		}
+		// Check symbols
+		for _, sym := range f.Symbols {
+			if sym.StartLine <= line && line <= sym.EndLine {
+				return sym.Name
+			}
+		}
+		// Check references
+		for _, ref := range f.References {
+			if ref.StartLine == line {
+				return ref.Name
+			}
+		}
+	}
+	return ""
 }
 
 // --- Helpers ---
