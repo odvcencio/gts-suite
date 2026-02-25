@@ -2,6 +2,7 @@ package lsp
 
 import (
 	"encoding/json"
+	"fmt"
 	"strings"
 	"sync"
 
@@ -32,6 +33,8 @@ func (s *Service) Register(srv *Server) {
 	srv.Handle("workspace/symbol", s.handleWorkspaceSymbol)
 	srv.Handle("textDocument/definition", s.handleDefinition)
 	srv.Handle("textDocument/references", s.handleReferences)
+	srv.Handle("textDocument/hover", s.handleHover)
+	srv.Handle("textDocument/rename", s.handleRename)
 
 	srv.OnNotify("initialized", func(params json.RawMessage) {
 		s.buildIndex()
@@ -244,6 +247,103 @@ func (s *Service) handleReferences(params json.RawMessage) (any, error) {
 		}
 	}
 	return locs, nil
+}
+
+func (s *Service) handleHover(params json.RawMessage) (any, error) {
+	var p struct {
+		TextDocument TextDocumentIdentifier `json:"textDocument"`
+		Position     Position               `json:"position"`
+	}
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	path := uriToPath(p.TextDocument.URI)
+	relPath := relativeTo(path, s.rootPath)
+	line := p.Position.Line + 1
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return nil, nil
+	}
+
+	for _, f := range s.idx.Files {
+		if f.Path != relPath {
+			continue
+		}
+		for _, sym := range f.Symbols {
+			if sym.StartLine <= line && line <= sym.EndLine {
+				content := sym.Kind + " " + sym.Name
+				if sym.Signature != "" {
+					content = sym.Name + sym.Signature
+				}
+				return Hover{
+					Contents: MarkupContent{Kind: "markdown", Value: "```" + f.Language + "\n" + content + "\n```"},
+				}, nil
+			}
+		}
+	}
+	return nil, nil
+}
+
+func (s *Service) handleRename(params json.RawMessage) (any, error) {
+	var p RenameParams
+	if err := json.Unmarshal(params, &p); err != nil {
+		return nil, err
+	}
+
+	path := uriToPath(p.TextDocument.URI)
+	relPath := relativeTo(path, s.rootPath)
+	line := p.Position.Line + 1
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+
+	if s.idx == nil {
+		return nil, fmt.Errorf("index not ready")
+	}
+
+	symbolName := s.symbolNameAtPosition(relPath, line, p.Position.Character)
+	if symbolName == "" {
+		return nil, fmt.Errorf("no symbol at position")
+	}
+
+	// Collect all edits: definitions + references
+	changes := make(map[string][]TextEdit)
+	for _, f := range s.idx.Files {
+		uri := pathToURI(f.Path, s.rootPath)
+		for _, sym := range f.Symbols {
+			if sym.Name == symbolName {
+				changes[uri] = append(changes[uri], TextEdit{
+					Range:   symbolNameRange(sym),
+					NewText: p.NewName,
+				})
+			}
+		}
+		for _, ref := range f.References {
+			if ref.Name == symbolName {
+				changes[uri] = append(changes[uri], TextEdit{
+					Range: Range{
+						Start: Position{Line: ref.StartLine - 1, Character: ref.StartColumn},
+						End:   Position{Line: ref.EndLine - 1, Character: ref.EndColumn},
+					},
+					NewText: p.NewName,
+				})
+			}
+		}
+	}
+
+	return WorkspaceEdit{Changes: changes}, nil
+}
+
+func symbolNameRange(sym model.Symbol) Range {
+	// Approximate: use the start line, first column
+	return Range{
+		Start: Position{Line: sym.StartLine - 1, Character: 0},
+		End:   Position{Line: sym.StartLine - 1, Character: len(sym.Name)},
+	}
 }
 
 // symbolNameAtPosition finds the symbol/reference name at a given cursor position.

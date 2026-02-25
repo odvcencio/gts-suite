@@ -114,6 +114,44 @@ const (
 	SKStruct      = 23
 )
 
+// Hover response
+type Hover struct {
+	Contents MarkupContent `json:"contents"`
+	Range    *Range        `json:"range,omitempty"`
+}
+
+type MarkupContent struct {
+	Kind  string `json:"kind"` // "plaintext" or "markdown"
+	Value string `json:"value"`
+}
+
+type TextEdit struct {
+	Range   Range  `json:"range"`
+	NewText string `json:"newText"`
+}
+
+type WorkspaceEdit struct {
+	Changes map[string][]TextEdit `json:"changes,omitempty"`
+}
+
+type RenameParams struct {
+	TextDocument TextDocumentIdentifier `json:"textDocument"`
+	Position     Position               `json:"position"`
+	NewName      string                 `json:"newName"`
+}
+
+type Diagnostic struct {
+	Range    Range  `json:"range"`
+	Severity int    `json:"severity"` // 1=Error, 2=Warning, 3=Info, 4=Hint
+	Source   string `json:"source,omitempty"`
+	Message  string `json:"message"`
+}
+
+type PublishDiagnosticsParams struct {
+	URI         string       `json:"uri"`
+	Diagnostics []Diagnostic `json:"diagnostics"`
+}
+
 // TextDocumentSync kinds
 const (
 	SyncNone        = 0
