@@ -8,15 +8,17 @@ import (
 
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/scope"
 )
 
 // Service holds workspace state and handles LSP requests.
 type Service struct {
-	mu       sync.RWMutex
-	rootURI  string
-	rootPath string
-	idx      *model.Index
-	builder  *index.Builder
+	mu         sync.RWMutex
+	rootURI    string
+	rootPath   string
+	idx        *model.Index
+	builder    *index.Builder
+	scopeGraph *scope.Graph
 }
 
 func NewService() *Service {
@@ -81,8 +83,16 @@ func (s *Service) buildIndex() {
 	if err != nil {
 		return
 	}
+
+	// Build scope graph
+	var sg *scope.Graph
+	if g, sgErr := scope.BuildFromIndex(idx, s.rootPath); sgErr == nil {
+		sg = g
+	}
+
 	s.mu.Lock()
 	s.idx = idx
+	s.scopeGraph = sg
 	s.mu.Unlock()
 }
 
@@ -162,8 +172,16 @@ func (s *Service) handleDidSave(params json.RawMessage) {
 	if err != nil {
 		return
 	}
+
+	// Rebuild scope graph
+	var sg *scope.Graph
+	if g, sgErr := scope.BuildFromIndex(newIdx, s.rootPath); sgErr == nil {
+		sg = g
+	}
+
 	s.mu.Lock()
 	s.idx = newIdx
+	s.scopeGraph = sg
 	s.mu.Unlock()
 }
 
@@ -187,7 +205,26 @@ func (s *Service) handleDefinition(params json.RawMessage) (any, error) {
 		return nil, nil
 	}
 
-	// Find the symbol at the cursor position
+	// Try scope graph resolution first
+	if s.scopeGraph != nil {
+		fs := s.scopeGraph.FileScope(relPath)
+		if fs != nil {
+			for i := range fs.Refs {
+				ref := &fs.Refs[i]
+				if ref.Loc.StartLine == line && ref.Resolved != nil {
+					return LSPLocation{
+						URI: pathToURI(ref.Resolved.Loc.File, s.rootPath),
+						Range: Range{
+							Start: Position{Line: ref.Resolved.Loc.StartLine - 1, Character: ref.Resolved.Loc.StartCol},
+							End:   Position{Line: ref.Resolved.Loc.EndLine - 1, Character: ref.Resolved.Loc.EndCol},
+						},
+					}, nil
+				}
+			}
+		}
+	}
+
+	// Fall back to name-based resolution
 	symbolName := s.symbolNameAtPosition(relPath, line, p.Position.Character)
 	if symbolName == "" {
 		return nil, nil
