@@ -78,6 +78,21 @@ func intArg(args map[string]any, key string, fallback int) int {
 	}
 }
 
+func floatArg(args map[string]any, key string, fallback float64) float64 {
+	raw, ok := args[key]
+	if !ok || raw == nil {
+		return fallback
+	}
+	switch typed := raw.(type) {
+	case float64:
+		return typed
+	case int:
+		return float64(typed)
+	default:
+		return fallback
+	}
+}
+
 func boolArg(args map[string]any, key string, fallback bool) bool {
 	raw, ok := args[key]
 	if !ok || raw == nil {

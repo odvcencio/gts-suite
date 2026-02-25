@@ -258,6 +258,45 @@ func (s *Service) Tools() []Tool {
 				},
 			}.ToMap(),
 		},
+		{
+			Name:        "gts_capa",
+			Description: "Detect capabilities from structural API/import patterns with MITRE ATT&CK mapping",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":           {Type: "string", Description: "index root path"},
+					"cache":          {Type: "string", Description: "index cache path"},
+					"category":       {Type: "string", Description: "filter by category (e.g. crypto, network, process_injection)"},
+					"min_confidence": {Type: "string", Description: "minimum confidence level", Enum: []string{"low", "medium", "high"}},
+				},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_similarity",
+			Description: "Find similar functions between codebases using exact hash and fuzzy n-gram matching",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path_a":    {Type: "string", Description: "first codebase path"},
+					"path_b":    {Type: "string", Description: "second codebase path (omit for self-comparison)"},
+					"cache_a":   {Type: "string", Description: "cache path for first index"},
+					"cache_b":   {Type: "string", Description: "cache path for second index"},
+					"threshold": {Type: "number", Description: "similarity threshold 0.0-1.0 (default 0.7)"},
+				},
+				Required: []string{"path_a"},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_yara",
+			Description: "Generate YARA rules from structural analysis of string literals and API call patterns",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":        {Type: "string", Description: "index root path"},
+					"cache":       {Type: "string", Description: "index cache path"},
+					"rule_name":   {Type: "string", Description: "name for the generated rule (default: generated_rule)"},
+					"min_strings": {Type: "integer", Description: "minimum strings for rule generation (default: 3)"},
+					"max_strings": {Type: "integer", Description: "maximum strings in rule (default: 20)"},
+				},
+			}.ToMap(),
+		},
 	}
 	for i := range tools {
 		finalizeToolSchema(&tools[i])
@@ -379,6 +418,12 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callFiles(args)
 	case "gts_bridge":
 		return s.callBridge(args)
+	case "gts_capa":
+		return s.callCapa(args)
+	case "gts_similarity":
+		return s.callSimilarity(args)
+	case "gts_yara":
+		return s.callYara(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}
