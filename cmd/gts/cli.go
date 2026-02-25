@@ -48,6 +48,9 @@ func newRootCmd() *cobra.Command {
 		newScopeCmd(),
 		newContextCmd(),
 		newLintCmd(),
+		newCapaCmd(),
+		newSimilarityCmd(),
+		newYaraCmd(),
 	)
 	return root
 }
