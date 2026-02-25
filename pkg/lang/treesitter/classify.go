@@ -20,6 +20,57 @@ var ImportNodeTypes = map[string]bool{
 	"preproc_include":           true, // C/C++
 }
 
+// ImportNodeTypesByLanguage narrows import node matching for languages where
+// generic node names (for example, "import") can overlap with non-statement nodes.
+var ImportNodeTypesByLanguage = map[string]map[string]bool{
+	"go": {
+		"import_spec": true,
+	},
+	"python": {
+		"import_statement":      true,
+		"import_from_statement": true,
+	},
+	"javascript": {
+		"import_statement": true,
+	},
+	"typescript": {
+		"import_statement": true,
+	},
+	"tsx": {
+		"import_statement": true,
+	},
+	"rust": {
+		"use_declaration": true,
+	},
+	"java": {
+		"import_declaration": true,
+	},
+	"c": {
+		"preproc_include": true,
+	},
+	"cpp": {
+		"preproc_include": true,
+	},
+	"c_sharp": {
+		"using_directive":        true,
+		"global_using_directive": true,
+	},
+	"kotlin": {
+		"import_header": true,
+	},
+	"php": {
+		"use_declaration":           true,
+		"namespace_use_declaration": true,
+	},
+}
+
+func isImportNodeType(language, nodeType string) bool {
+	if languageTypes, ok := ImportNodeTypesByLanguage[language]; ok {
+		return languageTypes[nodeType]
+	}
+	return ImportNodeTypes[nodeType]
+}
+
 // DeclarationNodeTypes lists tree-sitter node types that represent top-level
 // declarations (functions, types, classes, etc.) across supported languages.
 var DeclarationNodeTypes = map[string]bool{

@@ -256,6 +256,149 @@ func TestParseCFamilyCSharpAndKotlinImports(t *testing.T) {
 	}
 }
 
+func TestParseImportSyntaxPreservedForMappedLanguages(t *testing.T) {
+	testCases := []struct {
+		name     string
+		ext      string
+		fileName string
+		source   string
+		imports  []string
+	}{
+		{
+			name:     "python",
+			ext:      ".py",
+			fileName: "main.py",
+			source: `from pkg.module import Name as Alias
+import os as operating_system
+`,
+			imports: []string{
+				"from pkg.module import Name as Alias",
+				"import os as operating_system",
+			},
+		},
+		{
+			name:     "javascript",
+			ext:      ".js",
+			fileName: "main.js",
+			source: `import "./polyfill.js";
+import {join as j} from "./util.js";
+`,
+			imports: []string{
+				`import "./polyfill.js";`,
+				`import {join as j} from "./util.js";`,
+			},
+		},
+		{
+			name:     "typescript",
+			ext:      ".ts",
+			fileName: "main.ts",
+			source: `import type {Config} from "./types";
+import "./setup";
+`,
+			imports: []string{
+				`import type {Config} from "./types";`,
+				`import "./setup";`,
+			},
+		},
+		{
+			name:     "rust",
+			ext:      ".rs",
+			fileName: "main.rs",
+			source: `pub use crate::service::Worker as ServiceWorker;
+use std::fmt::Debug;
+`,
+			imports: []string{
+				"pub use crate::service::Worker as ServiceWorker;",
+				"use std::fmt::Debug;",
+			},
+		},
+		{
+			name:     "java",
+			ext:      ".java",
+			fileName: "Main.java",
+			source: `import static java.util.Collections.emptyList;
+import java.util.List;
+class Main {}
+`,
+			imports: []string{
+				"import static java.util.Collections.emptyList;",
+				"import java.util.List;",
+			},
+		},
+		{
+			name:     "c",
+			ext:      ".c",
+			fileName: "main.c",
+			source: `#include <stdio.h>
+#include "local.h"
+int main(void) { return 0; }
+`,
+			imports: []string{
+				"#include <stdio.h>",
+				"#include \"local.h\"",
+			},
+		},
+		{
+			name:     "cpp",
+			ext:      ".cpp",
+			fileName: "main.cpp",
+			source: `#include <vector>
+#include "util.hpp"
+`,
+			imports: []string{
+				"#include <vector>",
+				"#include \"util.hpp\"",
+			},
+		},
+		{
+			name:     "c_sharp",
+			ext:      ".cs",
+			fileName: "Main.cs",
+			source: `global using System.Text;
+using System;
+class C {}
+`,
+			imports: []string{
+				"global using System.Text;",
+				"using System;",
+			},
+		},
+		{
+			name:     "kotlin",
+			ext:      ".kt",
+			fileName: "Main.kt",
+			source: `import foo.bar.Baz as Qux;
+import kotlin.collections.List;
+class C
+`,
+			imports: []string{
+				"import foo.bar.Baz as Qux;",
+				"import kotlin.collections.List;",
+			},
+		},
+	}
+
+	for _, tc := range testCases {
+		tc := tc
+		t.Run(tc.name, func(t *testing.T) {
+			entry := findEntryByExtension(t, tc.ext)
+			parser, err := NewParser(entry)
+			if err != nil {
+				t.Fatalf("NewParser(%s) returned error: %v", tc.name, err)
+			}
+			summary, err := parser.Parse(tc.fileName, []byte(tc.source))
+			if err != nil {
+				t.Fatalf("Parse(%s) returned error: %v", tc.name, err)
+			}
+			for _, expectedImport := range tc.imports {
+				if !hasImport(summary, expectedImport) {
+					t.Fatalf("expected import %q in %s, got %v", expectedImport, tc.name, summary.Imports)
+				}
+			}
+		})
+	}
+}
+
 func TestParseIncrementalWithTree(t *testing.T) {
 	entry := findEntryByExtension(t, ".go")
 
@@ -427,6 +570,56 @@ func Handle() {
 	}
 }
 
+func TestParserConcurrentParseFirstUse(t *testing.T) {
+	entry := findEntryByExtension(t, ".go")
+
+	source := []byte(`package demo
+
+type Service struct{}
+
+func Handle() {
+	println("ok")
+}
+`)
+
+	const rounds = 12
+	const workers = 24
+
+	for round := 0; round < rounds; round++ {
+		parser, err := NewParser(entry)
+		if err != nil {
+			t.Fatalf("NewParser returned error: %v", err)
+		}
+
+		start := make(chan struct{})
+		errCh := make(chan error, workers)
+		var wg sync.WaitGroup
+		for worker := 0; worker < workers; worker++ {
+			wg.Add(1)
+			go func(round, worker int) {
+				defer wg.Done()
+				<-start
+
+				summary, parseErr := parser.Parse(fmt.Sprintf("round_%d_worker_%d.go", round, worker), source)
+				if parseErr != nil {
+					errCh <- parseErr
+					return
+				}
+				if !hasSymbol(summary, "function_definition", "Handle") {
+					errCh <- fmt.Errorf("missing Handle symbol for round=%d worker=%d", round, worker)
+					return
+				}
+			}(round, worker)
+		}
+		close(start)
+		wg.Wait()
+		close(errCh)
+		for err := range errCh {
+			t.Fatal(err)
+		}
+	}
+}
+
 func TestParseIncrementalWithTree_ConcurrentSharedTree(t *testing.T) {
 	entry := findEntryByExtension(t, ".go")
 	parser, err := NewParser(entry)
@@ -495,8 +688,8 @@ func A() {
 	}
 }
 
-func findEntryByExtension(t *testing.T, extension string) grammars.LangEntry {
-	t.Helper()
+func findEntryByExtension(tb testing.TB, extension string) grammars.LangEntry {
+	tb.Helper()
 	for _, entry := range grammars.AllLanguages() {
 		if strings.TrimSpace(entry.TagsQuery) == "" {
 			continue
@@ -507,7 +700,7 @@ func findEntryByExtension(t *testing.T, extension string) grammars.LangEntry {
 			}
 		}
 	}
-	t.Fatalf("no language entry with tags query for extension %q", extension)
+	tb.Fatalf("no language entry with tags query for extension %q", extension)
 	return grammars.LangEntry{}
 }
 

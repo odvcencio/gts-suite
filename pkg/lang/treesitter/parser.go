@@ -274,7 +274,7 @@ func (p *Parser) extractImports(tree *gotreesitter.Tree, src []byte) []string {
 		}
 
 		nodeType := node.Type(p.lang)
-		if ImportNodeTypes[nodeType] {
+		if isImportNodeType(p.entry.Name, nodeType) {
 			for _, imp := range extractImportsByLanguage(p.entry.Name, nodeType, strings.TrimSpace(node.Text(src)), node, p.lang, src) {
 				add(imp)
 			}
@@ -642,23 +642,42 @@ func extractImportsByLanguage(language, nodeType, raw string, node *gotreesitter
 			}
 		}
 	case "python":
-		return preserveWholeImport(raw, "import ", "from ")
+		if nodeType == "import_statement" || nodeType == "import_from_statement" {
+			return []string{raw}
+		}
 	case "javascript", "typescript", "tsx":
-		return preserveWholeImport(raw, "import ")
+		if nodeType == "import_statement" {
+			return []string{raw}
+		}
 	case "rust":
-		return preserveWholeImport(raw, "use ", "pub use ")
+		if nodeType == "use_declaration" {
+			return []string{raw}
+		}
 	case "java":
-		return preserveWholeImport(raw, "import ")
+		if nodeType == "import_declaration" {
+			return []string{raw}
+		}
 	case "c", "cpp":
-		return preserveLineImports(raw, "#include")
+		if nodeType == "preproc_include" {
+			return []string{raw}
+		}
 	case "c_sharp":
-		return preserveWholeImport(raw, "using ", "global using ")
+		if nodeType == "using_directive" || nodeType == "global_using_directive" {
+			return []string{raw}
+		}
 	case "php":
-		return preserveWholeImport(raw, "use ")
+		if nodeType == "use_declaration" || nodeType == "namespace_use_declaration" {
+			return []string{raw}
+		}
 	case "kotlin":
-		return preserveLineImports(raw, "import ")
+		if nodeType == "import_header" {
+			return []string{raw}
+		}
 	}
-	return preserveWholeImport(raw, "import ", "from ", "use ", "using ", "#include")
+	if ImportNodeTypes[nodeType] {
+		return []string{raw}
+	}
+	return nil
 }
 
 func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, src []byte) string {
@@ -678,48 +697,6 @@ func importPathFromSpec(node *gotreesitter.Node, lang *gotreesitter.Language, sr
 		}
 	}
 	return ""
-}
-
-func preserveWholeImport(raw string, prefixes ...string) []string {
-	line := strings.TrimSpace(raw)
-	if line == "" {
-		return nil
-	}
-	if hasImportPrefix(line, prefixes...) {
-		return []string{line}
-	}
-	return nil
-}
-
-func preserveLineImports(raw string, prefixes ...string) []string {
-	raw = strings.TrimSpace(raw)
-	if raw == "" {
-		return nil
-	}
-	lines := strings.Split(raw, "\n")
-	out := make([]string, 0, len(lines))
-	for _, line := range lines {
-		line = strings.TrimSpace(line)
-		if line == "" {
-			continue
-		}
-		if hasImportPrefix(line, prefixes...) {
-			out = append(out, line)
-		}
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
-func hasImportPrefix(line string, prefixes ...string) bool {
-	for _, prefix := range prefixes {
-		if strings.HasPrefix(line, prefix) {
-			return true
-		}
-	}
-	return false
 }
 
 func extractQuotedStrings(raw string) []string {
