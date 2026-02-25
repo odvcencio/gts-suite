@@ -2,7 +2,9 @@
 package xref
 
 import (
+	"bufio"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -68,8 +70,10 @@ type Graph struct {
 }
 
 type importScope struct {
-	paths  map[string]struct{}
-	tokens map[string]struct{}
+	paths        map[string]struct{}
+	packages     map[string]struct{}
+	tokens       map[string]struct{}
+	hasPathHints bool
 }
 
 type Walk struct {
@@ -125,10 +129,11 @@ func Build(idx *model.Index) (Graph, error) {
 
 	edgeByPair := map[string]*Edge{}
 	unresolved := make([]UnresolvedCall, 0, 32)
+	modulePath := modulePathFromRoot(idx.Root)
 
 	for _, file := range idx.Files {
 		pkg := packageFromPath(file.Path)
-		scope := buildImportScope(file.Imports)
+		scope := buildImportScope(file.Imports, modulePath)
 		callablesInFile := callableByFile[file.Path]
 		for _, ref := range file.References {
 			if !isCallReference(ref.Kind) {
@@ -474,18 +479,37 @@ func isCallableKind(kind string) bool {
 	}
 }
 
-func buildImportScope(imports []string) importScope {
+func buildImportScope(imports []string, modulePath string) importScope {
 	scope := importScope{
-		paths:  map[string]struct{}{},
-		tokens: map[string]struct{}{},
+		paths:    map[string]struct{}{},
+		packages: map[string]struct{}{},
+		tokens:   map[string]struct{}{},
 	}
-	for _, imp := range imports {
-		imp = normalizeImportPath(imp)
-		if imp == "" {
+	modulePath = normalizePathKey(modulePath)
+
+	for _, rawImport := range imports {
+		rawImport = strings.TrimSpace(rawImport)
+		if rawImport == "" {
 			continue
 		}
-		scope.paths[imp] = struct{}{}
-		for _, token := range splitImportTokens(imp) {
+
+		importPaths := importPathsFromEntry(rawImport)
+		if len(importPaths) > 0 {
+			scope.hasPathHints = true
+			for _, imp := range importPaths {
+				imp = normalizePathKey(imp)
+				if imp == "" {
+					continue
+				}
+				scope.paths[imp] = struct{}{}
+				if pkg, ok := packageFromImportPath(imp, modulePath); ok {
+					scope.packages[pkg] = struct{}{}
+				}
+			}
+			continue
+		}
+
+		for _, token := range splitImportTokens(rawImport) {
 			scope.tokens[token] = struct{}{}
 		}
 	}
@@ -522,7 +546,7 @@ func splitImportTokens(path string) []string {
 }
 
 func candidatesByImportScope(candidates []Definition, scope importScope) []Definition {
-	if len(candidates) == 0 || (len(scope.paths) == 0 && len(scope.tokens) == 0) {
+	if len(candidates) == 0 || (len(scope.paths) == 0 && len(scope.packages) == 0 && len(scope.tokens) == 0) {
 		return nil
 	}
 
@@ -536,26 +560,152 @@ func candidatesByImportScope(candidates []Definition, scope importScope) []Defin
 }
 
 func definitionMatchesImportScope(def Definition, scope importScope) bool {
-	pkg := filepath.ToSlash(filepath.Clean(strings.TrimSpace(def.Package)))
-	if pkg == "" || pkg == "." {
+	pkg := normalizePathKey(def.Package)
+	if pkg == "" {
 		return false
 	}
 
+	if _, ok := scope.packages[pkg]; ok {
+		return true
+	}
 	if _, ok := scope.paths[pkg]; ok {
 		return true
 	}
-	for importPath := range scope.paths {
-		if strings.HasSuffix(importPath, "/"+pkg) || strings.HasSuffix(pkg, "/"+importPath) {
-			return true
-		}
-	}
 
+	if scope.hasPathHints {
+		return false
+	}
 	for _, token := range splitImportTokens(pkg) {
 		if _, ok := scope.tokens[token]; ok {
 			return true
 		}
 	}
 	return false
+}
+
+func importPathsFromEntry(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	if looksLikeDirectImportPath(raw) {
+		return []string{raw}
+	}
+
+	quoted := extractQuotedStrings(raw)
+	if len(quoted) == 0 {
+		return nil
+	}
+	paths := make([]string, 0, len(quoted))
+	for _, value := range quoted {
+		value = normalizeImportPath(value)
+		if value == "" {
+			continue
+		}
+		paths = append(paths, value)
+	}
+	return paths
+}
+
+func looksLikeDirectImportPath(raw string) bool {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return false
+	}
+	return !strings.ContainsAny(raw, " \t\r\n")
+}
+
+func extractQuotedStrings(raw string) []string {
+	if raw == "" {
+		return nil
+	}
+	var out []string
+	for i := 0; i < len(raw); i++ {
+		quote := raw[i]
+		if quote != '\'' && quote != '"' && quote != '`' {
+			continue
+		}
+		start := i + 1
+		for j := start; j < len(raw); j++ {
+			if raw[j] == '\\' {
+				j++
+				continue
+			}
+			if raw[j] == quote {
+				out = append(out, raw[start:j])
+				i = j
+				break
+			}
+		}
+	}
+	return out
+}
+
+func packageFromImportPath(importPath, modulePath string) (string, bool) {
+	importPath = normalizePathKey(importPath)
+	if importPath == "" {
+		return "", false
+	}
+
+	if modulePath != "" {
+		if importPath == modulePath {
+			return ".", true
+		}
+		if strings.HasPrefix(importPath, modulePath+"/") {
+			trimmed := strings.TrimPrefix(importPath, modulePath+"/")
+			trimmed = normalizePathKey(trimmed)
+			if trimmed == "" {
+				return ".", true
+			}
+			return trimmed, true
+		}
+		return "", false
+	}
+
+	if !looksLikeLocalImportPath(importPath) {
+		return "", false
+	}
+	return importPath, true
+}
+
+func looksLikeLocalImportPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	if strings.ContainsAny(path, " \t\r\n") {
+		return false
+	}
+	if strings.HasPrefix(path, "./") || strings.HasPrefix(path, "../") || strings.HasPrefix(path, "/") {
+		return false
+	}
+	if strings.Contains(path, "://") {
+		return false
+	}
+
+	segments := strings.Split(path, "/")
+	if len(segments) == 0 {
+		return false
+	}
+	first := strings.TrimSpace(segments[0])
+	if first == "" {
+		return false
+	}
+	if strings.HasPrefix(first, "@") {
+		return false
+	}
+	if strings.Contains(first, ".") && len(segments) > 1 {
+		return false
+	}
+	return true
+}
+
+func normalizePathKey(raw string) string {
+	raw = normalizeImportPath(raw)
+	if raw == "" {
+		return ""
+	}
+	return filepath.ToSlash(filepath.Clean(raw))
 }
 
 func isCallReference(kind string) bool {
@@ -637,4 +787,31 @@ func keyPackageName(pkg, name string) string {
 
 func keyPair(leftID, rightID string) string {
 	return leftID + "\x00" + rightID
+}
+
+func modulePathFromRoot(root string) string {
+	if strings.TrimSpace(root) == "" {
+		return ""
+	}
+	goModPath := filepath.Join(root, "go.mod")
+	file, err := os.Open(goModPath)
+	if err != nil {
+		return ""
+	}
+	defer file.Close()
+
+	scanner := bufio.NewScanner(file)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "//") {
+			continue
+		}
+		if !strings.HasPrefix(line, "module ") {
+			continue
+		}
+		module := strings.TrimSpace(strings.TrimPrefix(line, "module "))
+		module = strings.Trim(module, `"`)
+		return normalizePathKey(module)
+	}
+	return ""
 }

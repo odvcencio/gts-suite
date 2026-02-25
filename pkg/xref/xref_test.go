@@ -1,6 +1,8 @@
 package xref
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/odvcencio/gts-suite/pkg/model"
@@ -254,6 +256,112 @@ func TestBuildImportAwareResolutionDetectsImportAmbiguity(t *testing.T) {
 		t.Fatalf("expected 1 unresolved call, got %d", len(graph.Unresolved))
 	}
 	if graph.Unresolved[0].Reason != "ambiguous_import" {
+		t.Fatalf("unexpected unresolved reason %q", graph.Unresolved[0].Reason)
+	}
+	if graph.Unresolved[0].CandidateCount != 2 {
+		t.Fatalf("expected candidate count 2, got %d", graph.Unresolved[0].CandidateCount)
+	}
+}
+
+func TestBuildImportAwareResolutionMatchesModuleQualifiedImport(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/repo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile go.mod failed: %v", err)
+	}
+
+	idx := &model.Index{
+		Root: root,
+		Files: []model.FileSummary{
+			{
+				Path: "pkg/alpha/a.go",
+				Symbols: []model.Symbol{
+					{File: "pkg/alpha/a.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path: "vendor/alpha/a.go",
+				Symbols: []model.Symbol{
+					{File: "vendor/alpha/a.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path:    "app/main.go",
+				Imports: []string{"example.com/repo/pkg/alpha"},
+				Symbols: []model.Symbol{
+					{File: "app/main.go", Kind: "function_definition", Name: "Caller", StartLine: 1, EndLine: 3},
+				},
+				References: []model.Reference{
+					{File: "app/main.go", Kind: "reference.call", Name: "Foo", StartLine: 2, EndLine: 2, StartColumn: 2, EndColumn: 5},
+				},
+			},
+		},
+	}
+
+	graph, err := Build(idx)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(graph.Edges) != 1 {
+		t.Fatalf("expected 1 resolved edge, got %d", len(graph.Edges))
+	}
+	if len(graph.Unresolved) != 0 {
+		t.Fatalf("expected 0 unresolved calls, got %d", len(graph.Unresolved))
+	}
+
+	edge := graph.Edges[0]
+	if edge.Resolution != "import" {
+		t.Fatalf("expected resolution import, got %q", edge.Resolution)
+	}
+	if edge.Callee.Package != "pkg/alpha" {
+		t.Fatalf("expected callee package pkg/alpha, got %q", edge.Callee.Package)
+	}
+}
+
+func TestBuildImportAwareResolutionAvoidsExternalImportTokenFalsePositive(t *testing.T) {
+	root := t.TempDir()
+	if err := os.WriteFile(filepath.Join(root, "go.mod"), []byte("module example.com/repo\n"), 0o644); err != nil {
+		t.Fatalf("WriteFile go.mod failed: %v", err)
+	}
+
+	idx := &model.Index{
+		Root: root,
+		Files: []model.FileSummary{
+			{
+				Path: "internal/http/a.go",
+				Symbols: []model.Symbol{
+					{File: "internal/http/a.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path: "core/worker/b.go",
+				Symbols: []model.Symbol{
+					{File: "core/worker/b.go", Kind: "function_definition", Name: "Foo", StartLine: 1, EndLine: 1},
+				},
+			},
+			{
+				Path:    "app/main.go",
+				Imports: []string{"net/http"},
+				Symbols: []model.Symbol{
+					{File: "app/main.go", Kind: "function_definition", Name: "Caller", StartLine: 1, EndLine: 3},
+				},
+				References: []model.Reference{
+					{File: "app/main.go", Kind: "reference.call", Name: "Foo", StartLine: 2, EndLine: 2, StartColumn: 2, EndColumn: 5},
+				},
+			},
+		},
+	}
+
+	graph, err := Build(idx)
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+	if len(graph.Edges) != 0 {
+		t.Fatalf("expected 0 resolved edges, got %d", len(graph.Edges))
+	}
+	if len(graph.Unresolved) != 1 {
+		t.Fatalf("expected 1 unresolved call, got %d", len(graph.Unresolved))
+	}
+	if graph.Unresolved[0].Reason != "ambiguous_global" {
 		t.Fatalf("unexpected unresolved reason %q", graph.Unresolved[0].Reason)
 	}
 	if graph.Unresolved[0].CandidateCount != 2 {
