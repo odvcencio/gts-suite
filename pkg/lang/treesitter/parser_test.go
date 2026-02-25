@@ -620,6 +620,125 @@ func Handle() {
 	}
 }
 
+func TestParserConcurrentMixedParseModes(t *testing.T) {
+	entry := findEntryByExtension(t, ".go")
+	parser, err := NewParser(entry)
+	if err != nil {
+		t.Fatalf("NewParser returned error: %v", err)
+	}
+
+	sourceA := []byte(`package demo
+
+type Service struct{}
+
+func Handle() {
+	println("A")
+}
+`)
+	sourceB := []byte(`package demo
+
+type Service struct{}
+
+func Handle() {
+	println("B")
+}
+`)
+
+	const workers = 10
+	const iterations = 30
+
+	start := make(chan struct{})
+	errCh := make(chan error, workers)
+	var wg sync.WaitGroup
+
+	for worker := 0; worker < workers; worker++ {
+		wg.Add(1)
+		go func(worker int) {
+			defer wg.Done()
+
+			_, oldTree, parseErr := parser.ParseWithTree(fmt.Sprintf("seed_%d.go", worker), sourceA)
+			if parseErr != nil {
+				errCh <- fmt.Errorf("seed ParseWithTree returned error for worker=%d: %w", worker, parseErr)
+				return
+			}
+			if oldTree == nil || oldTree.RootNode() == nil {
+				errCh <- fmt.Errorf("seed ParseWithTree returned nil tree for worker=%d", worker)
+				return
+			}
+
+			defer func() {
+				if oldTree != nil {
+					oldTree.Release()
+				}
+			}()
+
+			currentSrc := sourceA
+			nextSrc := sourceB
+
+			<-start
+
+			for i := 0; i < iterations; i++ {
+				switch i % 3 {
+				case 0:
+					summary, newTree, incrementalErr := parser.ParseIncrementalWithTree(
+						fmt.Sprintf("inc_%d_%d.go", worker, i),
+						nextSrc,
+						currentSrc,
+						oldTree,
+					)
+					if incrementalErr != nil {
+						if newTree != nil && newTree != oldTree {
+							newTree.Release()
+						}
+						errCh <- fmt.Errorf("ParseIncrementalWithTree returned error for worker=%d iteration=%d: %w", worker, i, incrementalErr)
+						return
+					}
+					if newTree != nil && newTree != oldTree {
+						oldTree.Release()
+						oldTree = newTree
+					}
+					if !hasSymbol(summary, "function_definition", "Handle") {
+						errCh <- fmt.Errorf("missing Handle symbol for worker=%d iteration=%d mode=incremental", worker, i)
+						return
+					}
+					currentSrc, nextSrc = nextSrc, currentSrc
+				case 1:
+					summary, parseErr := parser.Parse(fmt.Sprintf("parse_%d_%d.go", worker, i), currentSrc)
+					if parseErr != nil {
+						errCh <- fmt.Errorf("Parse returned error for worker=%d iteration=%d: %w", worker, i, parseErr)
+						return
+					}
+					if !hasSymbol(summary, "function_definition", "Handle") {
+						errCh <- fmt.Errorf("missing Handle symbol for worker=%d iteration=%d mode=parse", worker, i)
+						return
+					}
+				default:
+					summary, tree, withTreeErr := parser.ParseWithTree(fmt.Sprintf("withtree_%d_%d.go", worker, i), currentSrc)
+					if tree != nil {
+						tree.Release()
+					}
+					if withTreeErr != nil {
+						errCh <- fmt.Errorf("ParseWithTree returned error for worker=%d iteration=%d: %w", worker, i, withTreeErr)
+						return
+					}
+					if !hasSymbol(summary, "function_definition", "Handle") {
+						errCh <- fmt.Errorf("missing Handle symbol for worker=%d iteration=%d mode=parse_with_tree", worker, i)
+						return
+					}
+				}
+			}
+		}(worker)
+	}
+
+	close(start)
+	wg.Wait()
+	close(errCh)
+
+	for err := range errCh {
+		t.Fatal(err)
+	}
+}
+
 func TestParseIncrementalWithTree_ConcurrentSharedTree(t *testing.T) {
 	entry := findEntryByExtension(t, ".go")
 	parser, err := NewParser(entry)

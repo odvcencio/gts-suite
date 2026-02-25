@@ -20,7 +20,7 @@ type Parser struct {
 	entry       grammars.LangEntry
 	lang        *gotreesitter.Language
 	parserPool  sync.Pool
-	tagger      *gotreesitter.Tagger
+	tagsQuery   *gotreesitter.Query
 	treeLocksMu sync.Mutex
 	treeLocks   map[*gotreesitter.Tree]*treeLockEntry
 }
@@ -47,7 +47,7 @@ func NewParser(entry grammars.LangEntry) (*Parser, error) {
 		return nil, fmt.Errorf("language loader returned nil for %q", entry.Name)
 	}
 
-	tagger, err := gotreesitter.NewTagger(lang, entry.TagsQuery)
+	tagsQuery, err := gotreesitter.NewQuery(entry.TagsQuery, lang)
 	if err != nil {
 		return nil, fmt.Errorf("compile tags query for %q: %w", entry.Name, err)
 	}
@@ -55,7 +55,7 @@ func NewParser(entry grammars.LangEntry) (*Parser, error) {
 	return &Parser{
 		entry:     entry,
 		lang:      lang,
-		tagger:    tagger,
+		tagsQuery: tagsQuery,
 		treeLocks: make(map[*gotreesitter.Tree]*treeLockEntry),
 		parserPool: sync.Pool{
 			New: func() any { return gotreesitter.NewParser(lang) },
@@ -162,11 +162,65 @@ func (p *Parser) buildSummaryFromTree(path string, src []byte, tree *gotreesitte
 		Path:     path,
 		Language: p.Language(),
 	}
-	tags := p.tagger.TagTree(tree)
+	tags := p.extractTags(tree, src)
 	summary.Imports = p.extractImports(tree, src)
 	summary.Symbols = p.extractSymbols(src, tree, tags)
 	summary.References = p.extractReferences(tags)
 	return summary
+}
+
+func (p *Parser) extractTags(tree *gotreesitter.Tree, src []byte) []gotreesitter.Tag {
+	if tree == nil || tree.RootNode() == nil || p.tagsQuery == nil {
+		return nil
+	}
+
+	matches := p.tagsQuery.ExecuteNode(tree.RootNode(), p.lang, src)
+	if len(matches) == 0 {
+		return nil
+	}
+
+	tags := make([]gotreesitter.Tag, 0, len(matches))
+	for _, match := range matches {
+		var tag gotreesitter.Tag
+		for _, capture := range match.Captures {
+			if capture.Node == nil {
+				continue
+			}
+			switch {
+			case capture.Name == "name":
+				tag.Name = capture.Node.Text(src)
+				tag.NameRange = capture.Node.Range()
+			case strings.HasPrefix(capture.Name, "definition."), strings.HasPrefix(capture.Name, "reference."):
+				tag.Kind = capture.Name
+				tag.Range = capture.Node.Range()
+			}
+		}
+
+		if tag.Kind == "" {
+			continue
+		}
+		if tag.Name == "" {
+			start := int(tag.Range.StartByte)
+			end := int(tag.Range.EndByte)
+			if start < 0 {
+				start = 0
+			}
+			if end < start {
+				end = start
+			}
+			if end > len(src) {
+				end = len(src)
+			}
+			tag.Name = string(src[start:end])
+			tag.NameRange = tag.Range
+		}
+		tags = append(tags, tag)
+	}
+
+	if len(tags) == 0 {
+		return nil
+	}
+	return tags
 }
 
 func (p *Parser) parseTree(src []byte) (*gotreesitter.Tree, error) {
