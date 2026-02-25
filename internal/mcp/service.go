@@ -297,6 +297,56 @@ func (s *Service) Tools() []Tool {
 				},
 			}.ToMap(),
 		},
+		{
+			Name:        "gts_complexity",
+			Description: "AST-based complexity metrics per function: cyclomatic, cognitive, nesting depth, fan-in/out",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":           {Type: "string", Description: "index root path"},
+					"cache":          {Type: "string", Description: "index cache path"},
+					"min_cyclomatic": {Type: "integer", Description: "minimum cyclomatic complexity to include (default: 0)"},
+					"sort":           {Type: "string", Description: "sort field: cyclomatic, cognitive, lines, nesting (default: cyclomatic)"},
+					"top":            {Type: "integer", Description: "limit to top N results (default: all)"},
+				},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_testmap",
+			Description: "Map test functions to implementation functions via call graph with coverage classification",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":          {Type: "string", Description: "index root path"},
+					"cache":         {Type: "string", Description: "index cache path"},
+					"untested_only": {Type: "boolean", Description: "only show untested functions (default: false)"},
+					"kind":          {Type: "string", Description: "filter by symbol kind (e.g. function, method)"},
+				},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_impact",
+			Description: "Compute blast radius and risk scores for changed symbols via reverse call graph traversal",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":      {Type: "string", Description: "index root path"},
+					"cache":     {Type: "string", Description: "index cache path"},
+					"changed":   {OneOf: stringOrArray},
+					"diff_ref":  {Type: "string", Description: "git ref for diff-based change detection (e.g. HEAD~1)"},
+					"max_depth": {Type: "integer", Description: "maximum traversal depth (default: 10)"},
+				},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_hotspot",
+			Description: "Detect code hotspots from git churn, complexity, and call graph centrality",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"path":  {Type: "string", Description: "index root path"},
+					"cache": {Type: "string", Description: "index cache path"},
+					"since": {Type: "string", Description: "git log period (e.g. 90d, 6m, 1y; default: 90d)"},
+					"top":   {Type: "integer", Description: "limit to top N results (default: 20)"},
+				},
+			}.ToMap(),
+		},
 	}
 	for i := range tools {
 		finalizeToolSchema(&tools[i])
@@ -424,6 +474,14 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callSimilarity(args)
 	case "gts_yara":
 		return s.callYara(args)
+	case "gts_complexity":
+		return s.callComplexity(args)
+	case "gts_testmap":
+		return s.callTestmap(args)
+	case "gts_impact":
+		return s.callImpact(args)
+	case "gts_hotspot":
+		return s.callHotspot(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

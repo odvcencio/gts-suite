@@ -51,6 +51,10 @@ func newRootCmd() *cobra.Command {
 		newCapaCmd(),
 		newSimilarityCmd(),
 		newYaraCmd(),
+		newComplexityCmd(),
+		newTestmapCmd(),
+		newImpactCmd(),
+		newHotspotCmd(),
 	)
 	return root
 }
