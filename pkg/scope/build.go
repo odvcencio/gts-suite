@@ -131,6 +131,27 @@ func processMatch(
 				Loc:  nodeLocation(node, path),
 			}, seen)
 
+		case name == "def.class":
+			addDefDedup(fileScope, Definition{
+				Name: text,
+				Kind: DefClass,
+				Loc:  nodeLocation(node, path),
+			}, seen)
+
+		case name == "def.interface":
+			addDefDedup(fileScope, Definition{
+				Name: text,
+				Kind: DefInterface,
+				Loc:  nodeLocation(node, path),
+			}, seen)
+
+		case name == "def.import":
+			addDefDedup(fileScope, Definition{
+				Name: text,
+				Kind: DefImport,
+				Loc:  nodeLocation(node, path),
+			}, seen)
+
 		case name == "def.param":
 			addDefDedup(fileScope, Definition{
 				Name: text,
