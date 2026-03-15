@@ -47,9 +47,31 @@ func BuildFromIndex(idx *model.Index, rootPath string) (*Graph, error) {
 		graph.AddFileScope(f.Path, fileScope)
 	}
 
-	// Resolve all references within each file scope
+	// Build package scopes: group files by directory, aggregate definitions
+	pkgFiles := make(map[string][]string)
+	for path := range graph.FileScopes {
+		dir := filepath.Dir(path)
+		if dir == "" || dir == "." {
+			dir = "."
+		}
+		pkgFiles[dir] = append(pkgFiles[dir], path)
+	}
+	for dir, files := range pkgFiles {
+		pkgScope := NewScope(ScopePackage, nil)
+		for _, file := range files {
+			fs := graph.FileScopes[file]
+			for _, d := range fs.Defs {
+				pkgScope.AddDef(d)
+			}
+			fs.Parent = pkgScope
+			pkgScope.Children = append(pkgScope.Children, fs)
+		}
+		graph.AddPackageScope(dir, pkgScope)
+	}
+
+	// Resolve all references within each file scope (with graph for cross-file)
 	for _, fs := range graph.FileScopes {
-		ResolveAll(fs)
+		ResolveAllGraph(fs, graph)
 	}
 
 	return graph, nil

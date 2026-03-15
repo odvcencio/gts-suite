@@ -8,6 +8,54 @@ import (
 	"github.com/odvcencio/gts-suite/pkg/index"
 )
 
+func TestBuildFromIndexPopulatesPackages(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package foo\n\nfunc Alpha() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.go"), []byte("package foo\n\nfunc Beta() {}\n"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	builder := index.NewBuilder()
+	idx, err := builder.BuildPath(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	graph, err := BuildFromIndex(idx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if graph.FileScope("a.go") == nil {
+		t.Error("missing file scope for a.go")
+	}
+	if graph.FileScope("b.go") == nil {
+		t.Error("missing file scope for b.go")
+	}
+
+	var pkgScope *Scope
+	for _, ps := range graph.Packages {
+		pkgScope = ps
+		break
+	}
+	if pkgScope == nil {
+		t.Fatal("no package scope created")
+	}
+
+	names := make(map[string]bool)
+	for _, d := range pkgScope.Defs {
+		names[d.Name] = true
+	}
+	if !names["Alpha"] {
+		t.Error("package scope missing Alpha")
+	}
+	if !names["Beta"] {
+		t.Error("package scope missing Beta")
+	}
+}
+
 func TestBuildFromIndex(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "main.go"), []byte(
