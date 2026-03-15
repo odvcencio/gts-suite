@@ -8,25 +8,31 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/odvcencio/gts-suite/pkg/feeds"
+	feedcompiler "github.com/odvcencio/gts-suite/pkg/feeds/compiler"
 	feedparser "github.com/odvcencio/gts-suite/pkg/feeds/parser"
+	feedvcs "github.com/odvcencio/gts-suite/pkg/feeds/vcs"
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
 	"github.com/odvcencio/gts-suite/pkg/proxy"
 	"github.com/odvcencio/gts-suite/pkg/scope"
+	"github.com/odvcencio/gts-suite/pkg/socket"
 )
 
 // Service holds workspace state and handles LSP requests.
 type Service struct {
-	mu         sync.RWMutex
-	rootURI    string
-	rootPath   string
-	idx        *model.Index
-	builder    *index.Builder
-	scopeGraph *scope.Graph
-	feedEngine *feeds.Engine
-	proxyMgr   *proxy.Manager
+	mu               sync.RWMutex
+	rootURI          string
+	rootPath         string
+	idx              *model.Index
+	builder          *index.Builder
+	scopeGraph       *scope.Graph
+	feedEngine       *feeds.Engine
+	proxyMgr         *proxy.Manager
+	socketSrv        *socket.Server
+	feedsInitialized bool
 }
 
 func NewService(proxyMgr *proxy.Manager) *Service {
@@ -86,6 +92,9 @@ func (s *Service) handleInitialize(params json.RawMessage) (any, error) {
 }
 
 func (s *Service) handleShutdown(params json.RawMessage) (any, error) {
+	if s.socketSrv != nil {
+		s.socketSrv.Stop()
+	}
 	return nil, nil
 }
 
@@ -111,10 +120,31 @@ func (s *Service) proxyRequest(method string, params json.RawMessage, fileURI st
 	return json.RawMessage(result), true
 }
 
+// initFeeds registers VCS and compiler feeds once we know the workspace root.
+func (s *Service) initFeeds() {
+	if s.feedsInitialized {
+		return
+	}
+	s.feedsInitialized = true
+	if vcsFeed := feedvcs.Detect(s.rootPath); vcsFeed != nil {
+		s.feedEngine.Register(vcsFeed)
+	}
+	if compilerFeed := feedcompiler.Detect(slog.Default()); compilerFeed != nil {
+		s.feedEngine.Register(compilerFeed)
+	}
+}
+
 func (s *Service) buildIndex() {
 	if s.rootPath == "" {
 		return
 	}
+
+	s.initFeeds()
+
+	if s.socketSrv == nil {
+		s.socketSrv = s.StartSocket()
+	}
+
 	idx, err := s.builder.BuildPath(s.rootPath)
 	if err != nil {
 		return
@@ -141,6 +171,135 @@ func (s *Service) buildIndex() {
 	s.idx = idx
 	s.scopeGraph = graph
 	s.mu.Unlock()
+}
+
+// StartSocket starts the Unix socket server for CLI client queries.
+// Call after handleInitialize sets rootPath.
+func (s *Service) StartSocket() *socket.Server {
+	if s.rootPath == "" {
+		return nil
+	}
+	srv := socket.NewServer(s.rootPath, slog.Default())
+
+	srv.Handle("feeds", func(params json.RawMessage) (any, error) {
+		var result []map[string]any
+		for _, f := range s.feedEngine.Feeds() {
+			h := s.feedEngine.Health(f.Name())
+			entry := map[string]any{
+				"name":     f.Name(),
+				"priority": f.Priority(),
+				"active":   !h.Disabled,
+				"health":   "healthy",
+			}
+			if h.Disabled {
+				entry["health"] = "disabled"
+			}
+			if h.LastError != nil {
+				entry["error"] = h.LastError.Error()
+				entry["health"] = "degraded"
+			}
+			if !h.LastRun.IsZero() {
+				entry["lastRun"] = h.LastRun.Format(time.RFC3339)
+			}
+			result = append(result, entry)
+		}
+		return result, nil
+	})
+
+	srv.Handle("refs", func(params json.RawMessage) (any, error) {
+		var p struct {
+			Symbol string `json:"symbol"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil || p.Symbol == "" {
+			return nil, fmt.Errorf("symbol required")
+		}
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		if s.idx == nil {
+			return []any{}, nil
+		}
+		var refs []map[string]any
+		for _, f := range s.idx.Files {
+			for _, ref := range f.References {
+				if ref.Name == p.Symbol {
+					refs = append(refs, map[string]any{
+						"file":   f.Path,
+						"line":   ref.StartLine,
+						"column": ref.StartColumn,
+					})
+				}
+			}
+		}
+		return refs, nil
+	})
+
+	srv.Handle("blame", func(params json.RawMessage) (any, error) {
+		var p struct {
+			File string `json:"file"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil || p.File == "" {
+			return nil, fmt.Errorf("file required")
+		}
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		if s.scopeGraph == nil {
+			return []any{}, nil
+		}
+		fs := s.scopeGraph.FileScope(p.File)
+		if fs == nil {
+			return []any{}, nil
+		}
+		var entities []map[string]any
+		for _, d := range fs.Defs {
+			entry := map[string]any{
+				"name":      d.Name,
+				"kind":      d.Kind,
+				"startLine": d.Loc.StartLine,
+				"endLine":   d.Loc.EndLine,
+			}
+			if author, ok := scope.GetMeta[string](&d, "vcs.last_author"); ok {
+				entry["author"] = author
+			}
+			if commit, ok := scope.GetMeta[string](&d, "vcs.last_commit"); ok {
+				entry["commit"] = commit
+			}
+			entities = append(entities, entry)
+		}
+		return entities, nil
+	})
+
+	srv.Handle("impact", func(params json.RawMessage) (any, error) {
+		var p struct {
+			Symbol string `json:"symbol"`
+		}
+		if err := json.Unmarshal(params, &p); err != nil || p.Symbol == "" {
+			return nil, fmt.Errorf("symbol required")
+		}
+		s.mu.RLock()
+		defer s.mu.RUnlock()
+		if s.idx == nil {
+			return map[string]any{"symbol": p.Symbol, "affected": []any{}}, nil
+		}
+		var affected []map[string]any
+		for _, f := range s.idx.Files {
+			for _, ref := range f.References {
+				if ref.Name == p.Symbol {
+					affected = append(affected, map[string]any{
+						"name": ref.Name,
+						"file": f.Path,
+						"line": ref.StartLine,
+					})
+				}
+			}
+		}
+		return map[string]any{"symbol": p.Symbol, "affected": affected}, nil
+	})
+
+	if err := srv.Start(); err != nil {
+		slog.Error("failed to start socket server", "error", err)
+		return nil
+	}
+	return srv
 }
 
 func (s *Service) handleDocumentSymbol(params json.RawMessage) (any, error) {
