@@ -113,3 +113,70 @@ func TestResolveDottedAccess(t *testing.T) {
 		t.Errorf("expected Println, got %q", file.Refs[0].Resolved.Name)
 	}
 }
+
+func TestResolveRefTypeMember(t *testing.T) {
+	graph := NewGraph()
+	fileScope := NewScope(ScopeFile, nil)
+
+	typeScope := NewScope(ScopeClass, fileScope)
+	typeScope.AddDef(Definition{
+		Name: "DoWork",
+		Kind: DefMethod,
+		Loc:  Location{File: "main.go", StartLine: 10},
+	})
+
+	fileScope.AddDef(Definition{
+		Name:  "MyType",
+		Kind:  DefType,
+		Loc:   Location{File: "main.go", StartLine: 5},
+		Scope: typeScope,
+	})
+
+	fileScope.AddDef(Definition{
+		Name:      "obj",
+		Kind:      DefVariable,
+		TypeAnnot: "MyType",
+		Loc:       Location{File: "main.go", StartLine: 15},
+	})
+
+	fileScope.AddRef(Ref{
+		Name:   "obj",
+		Member: "DoWork",
+		Loc:    Location{File: "main.go", StartLine: 20},
+	})
+
+	graph.AddFileScope("main.go", fileScope)
+	ResolveAllGraph(fileScope, graph)
+
+	if len(fileScope.Refs) != 1 {
+		t.Fatalf("expected 1 ref, got %d", len(fileScope.Refs))
+	}
+	ref := fileScope.Refs[0]
+	if ref.Resolved == nil {
+		t.Fatal("ref.Resolved is nil, expected DoWork")
+	}
+	if ref.Resolved.Name != "DoWork" {
+		t.Errorf("ref.Resolved.Name = %q, want DoWork", ref.Resolved.Name)
+	}
+}
+
+func TestResolveRefNoTypeAnnot(t *testing.T) {
+	graph := NewGraph()
+	fileScope := NewScope(ScopeFile, nil)
+	fileScope.AddDef(Definition{
+		Name: "obj",
+		Kind: DefVariable,
+		Loc:  Location{File: "main.go", StartLine: 1},
+	})
+	fileScope.AddRef(Ref{
+		Name:   "obj",
+		Member: "Missing",
+		Loc:    Location{File: "main.go", StartLine: 5},
+	})
+	graph.AddFileScope("main.go", fileScope)
+	ResolveAllGraph(fileScope, graph)
+
+	if fileScope.Refs[0].Resolved != nil {
+		t.Error("expected nil Resolved for untyped variable member access")
+	}
+}
