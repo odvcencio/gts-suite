@@ -34,7 +34,7 @@ func TestServiceInitialize(t *testing.T) {
 	input += lspRequest(2, "shutdown", nil)
 
 	var out bytes.Buffer
-	svc := NewService()
+	svc := NewService(nil)
 	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
 	svc.Register(srv)
 	srv.Serve()
@@ -63,7 +63,7 @@ func TestServiceGoToDefinition(t *testing.T) {
 	input += lspRequest(3, "shutdown", nil)
 
 	var out bytes.Buffer
-	svc := NewService()
+	svc := NewService(nil)
 	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
 	svc.Register(srv)
 	srv.Serve()
@@ -91,7 +91,7 @@ func TestServiceDocumentSymbols(t *testing.T) {
 	input += lspRequest(3, "shutdown", nil)
 
 	var out bytes.Buffer
-	svc := NewService()
+	svc := NewService(nil)
 	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
 	svc.Register(srv)
 	srv.Serve()
@@ -120,7 +120,7 @@ func TestServiceHover(t *testing.T) {
 	input += lspRequest(3, "shutdown", nil)
 
 	var out bytes.Buffer
-	svc := NewService()
+	svc := NewService(nil)
 	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
 	svc.Register(srv)
 	srv.Serve()

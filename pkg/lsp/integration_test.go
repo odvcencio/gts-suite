@@ -42,7 +42,7 @@ func TestIntegrationMultiFileGoProject(t *testing.T) {
 	input += lspRequest(5, "shutdown", nil)
 
 	var out bytes.Buffer
-	svc := NewService()
+	svc := NewService(nil)
 	srv := NewServer(strings.NewReader(input), &out, os.Stderr)
 	svc.Register(srv)
 	srv.Serve()

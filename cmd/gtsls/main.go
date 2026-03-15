@@ -28,7 +28,7 @@ func main() {
 	}
 
 	// LSP mode (default)
-	svc := lsp.NewService()
+	svc := lsp.NewService(nil)
 	srv := lsp.NewServer(os.Stdin, os.Stdout, os.Stderr)
 	svc.Register(srv)
 

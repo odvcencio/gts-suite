@@ -13,6 +13,7 @@ import (
 	feedparser "github.com/odvcencio/gts-suite/pkg/feeds/parser"
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
+	"github.com/odvcencio/gts-suite/pkg/proxy"
 	"github.com/odvcencio/gts-suite/pkg/scope"
 )
 
@@ -25,14 +26,16 @@ type Service struct {
 	builder    *index.Builder
 	scopeGraph *scope.Graph
 	feedEngine *feeds.Engine
+	proxyMgr   *proxy.Manager
 }
 
-func NewService() *Service {
+func NewService(proxyMgr *proxy.Manager) *Service {
 	engine := feeds.NewEngine(slog.Default())
 	engine.Register(feedparser.New())
 	return &Service{
 		builder:    index.NewBuilder(),
 		feedEngine: engine,
+		proxyMgr:   proxyMgr,
 	}
 }
 
@@ -52,6 +55,8 @@ func (s *Service) Register(srv *Server) {
 	})
 	srv.OnNotify("textDocument/didOpen", s.handleDidOpen)
 	srv.OnNotify("textDocument/didSave", s.handleDidSave)
+	srv.OnNotify("textDocument/didChange", s.handleDidChange)
+	srv.OnNotify("textDocument/didClose", s.handleDidClose)
 	srv.OnNotify("exit", func(params json.RawMessage) {})
 }
 
@@ -82,6 +87,28 @@ func (s *Service) handleInitialize(params json.RawMessage) (any, error) {
 
 func (s *Service) handleShutdown(params json.RawMessage) (any, error) {
 	return nil, nil
+}
+
+// proxyRequest tries to forward a request to the backend LSP.
+// Returns (result, true) if backend handled it, (nil, false) to fall back to native.
+func (s *Service) proxyRequest(method string, params json.RawMessage, fileURI string) (any, bool) {
+	if s.proxyMgr == nil {
+		return nil, false
+	}
+	cat := proxy.Categorize(method)
+	if cat != proxy.RouteBackendWins {
+		return nil, false
+	}
+	file := uriToPath(fileURI)
+	b := s.proxyMgr.BackendForFile(file)
+	if b == nil {
+		return nil, false
+	}
+	result, err := b.Request(method, params)
+	if err != nil {
+		return nil, false
+	}
+	return json.RawMessage(result), true
 }
 
 func (s *Service) buildIndex() {
@@ -177,10 +204,39 @@ func (s *Service) handleWorkspaceSymbol(params json.RawMessage) (any, error) {
 }
 
 func (s *Service) handleDidOpen(params json.RawMessage) {
-	// no-op for now
+	if s.proxyMgr == nil {
+		return
+	}
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	if json.Unmarshal(params, &p) == nil {
+		file := uriToPath(p.TextDocument.URI)
+		if b := s.proxyMgr.BackendForFile(file); b != nil {
+			b.Notify("textDocument/didOpen", params)
+		}
+	}
 }
 
 func (s *Service) handleDidSave(params json.RawMessage) {
+	// Forward to backend
+	if s.proxyMgr != nil {
+		var p struct {
+			TextDocument struct {
+				URI string `json:"uri"`
+			} `json:"textDocument"`
+		}
+		if json.Unmarshal(params, &p) == nil {
+			file := uriToPath(p.TextDocument.URI)
+			if b := s.proxyMgr.BackendForFile(file); b != nil {
+				b.Notify("textDocument/didSave", params)
+			}
+		}
+	}
+
+	// Existing index rebuild code follows...
 	if s.rootPath == "" {
 		return
 	}
@@ -216,6 +272,40 @@ func (s *Service) handleDidSave(params json.RawMessage) {
 	s.mu.Unlock()
 }
 
+func (s *Service) handleDidChange(params json.RawMessage) {
+	if s.proxyMgr == nil {
+		return
+	}
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	if json.Unmarshal(params, &p) == nil {
+		file := uriToPath(p.TextDocument.URI)
+		if b := s.proxyMgr.BackendForFile(file); b != nil {
+			b.Notify("textDocument/didChange", params)
+		}
+	}
+}
+
+func (s *Service) handleDidClose(params json.RawMessage) {
+	if s.proxyMgr == nil {
+		return
+	}
+	var p struct {
+		TextDocument struct {
+			URI string `json:"uri"`
+		} `json:"textDocument"`
+	}
+	if json.Unmarshal(params, &p) == nil {
+		file := uriToPath(p.TextDocument.URI)
+		if b := s.proxyMgr.BackendForFile(file); b != nil {
+			b.Notify("textDocument/didClose", params)
+		}
+	}
+}
+
 func (s *Service) handleDefinition(params json.RawMessage) (any, error) {
 	var p struct {
 		TextDocument TextDocumentIdentifier `json:"textDocument"`
@@ -223,6 +313,11 @@ func (s *Service) handleDefinition(params json.RawMessage) (any, error) {
 	}
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
+	}
+
+	// Try proxy backend first
+	if result, ok := s.proxyRequest("textDocument/definition", params, p.TextDocument.URI); ok {
+		return result, nil
 	}
 
 	path := uriToPath(p.TextDocument.URI)
@@ -284,6 +379,11 @@ func (s *Service) handleReferences(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 
+	// Try proxy backend first
+	if result, ok := s.proxyRequest("textDocument/references", params, p.TextDocument.URI); ok {
+		return result, nil
+	}
+
 	path := uriToPath(p.TextDocument.URI)
 	relPath := relativeTo(path, s.rootPath)
 	line := p.Position.Line + 1
@@ -326,15 +426,42 @@ func (s *Service) handleHover(params json.RawMessage) (any, error) {
 		return nil, err
 	}
 
-	path := uriToPath(p.TextDocument.URI)
+	// Get native hover
+	nativeResult := s.nativeHover(p.TextDocument.URI, p.Position)
+
+	// Try to merge with backend hover
+	if s.proxyMgr != nil {
+		file := uriToPath(p.TextDocument.URI)
+		if b := s.proxyMgr.BackendForFile(file); b != nil {
+			backendResult, err := b.Request("textDocument/hover", params)
+			if err == nil && backendResult != nil {
+				var backendHover Hover
+				if json.Unmarshal(backendResult, &backendHover) == nil && backendHover.Contents.Value != "" {
+					if nativeResult != nil {
+						backendHover.Contents.Value += "\n\n---\n\n" + nativeResult.Contents.Value
+					}
+					return backendHover, nil
+				}
+			}
+		}
+	}
+
+	if nativeResult != nil {
+		return *nativeResult, nil
+	}
+	return nil, nil
+}
+
+func (s *Service) nativeHover(uri string, pos Position) *Hover {
+	path := uriToPath(uri)
 	relPath := relativeTo(path, s.rootPath)
-	line := p.Position.Line + 1
+	line := pos.Line + 1
 
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 
 	if s.idx == nil {
-		return nil, nil
+		return nil
 	}
 
 	for _, f := range s.idx.Files {
@@ -347,19 +474,24 @@ func (s *Service) handleHover(params json.RawMessage) (any, error) {
 				if sym.Signature != "" {
 					content = sym.Name + sym.Signature
 				}
-				return Hover{
+				return &Hover{
 					Contents: MarkupContent{Kind: "markdown", Value: "```" + f.Language + "\n" + content + "\n```"},
-				}, nil
+				}
 			}
 		}
 	}
-	return nil, nil
+	return nil
 }
 
 func (s *Service) handleRename(params json.RawMessage) (any, error) {
 	var p RenameParams
 	if err := json.Unmarshal(params, &p); err != nil {
 		return nil, err
+	}
+
+	// Try proxy backend first
+	if result, ok := s.proxyRequest("textDocument/rename", params, p.TextDocument.URI); ok {
+		return result, nil
 	}
 
 	path := uriToPath(p.TextDocument.URI)
