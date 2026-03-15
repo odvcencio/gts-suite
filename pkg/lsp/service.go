@@ -3,9 +3,14 @@ package lsp
 import (
 	"encoding/json"
 	"fmt"
+	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
+	"github.com/odvcencio/gts-suite/pkg/feeds"
+	feedparser "github.com/odvcencio/gts-suite/pkg/feeds/parser"
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
 	"github.com/odvcencio/gts-suite/pkg/scope"
@@ -19,11 +24,15 @@ type Service struct {
 	idx        *model.Index
 	builder    *index.Builder
 	scopeGraph *scope.Graph
+	feedEngine *feeds.Engine
 }
 
 func NewService() *Service {
+	engine := feeds.NewEngine(slog.Default())
+	engine.Register(feedparser.New())
 	return &Service{
-		builder: index.NewBuilder(),
+		builder:    index.NewBuilder(),
+		feedEngine: engine,
 	}
 }
 
@@ -84,15 +93,26 @@ func (s *Service) buildIndex() {
 		return
 	}
 
-	// Build scope graph
-	var sg *scope.Graph
-	if g, sgErr := scope.BuildFromIndex(idx, s.rootPath); sgErr == nil {
-		sg = g
+	graph := scope.NewGraph()
+	ctx := &feeds.FeedContext{
+		WorkspaceRoot: s.rootPath,
+		Logger:        slog.Default(),
+	}
+	for _, f := range idx.Files {
+		src, readErr := os.ReadFile(filepath.Join(s.rootPath, f.Path))
+		if readErr != nil {
+			continue
+		}
+		s.feedEngine.RunFile(graph, f.Path, src, f.Language, ctx)
+	}
+
+	for _, fs := range graph.FileScopes {
+		scope.ResolveAllGraph(fs, graph)
 	}
 
 	s.mu.Lock()
 	s.idx = idx
-	s.scopeGraph = sg
+	s.scopeGraph = graph
 	s.mu.Unlock()
 }
 
@@ -173,15 +193,26 @@ func (s *Service) handleDidSave(params json.RawMessage) {
 		return
 	}
 
-	// Rebuild scope graph
-	var sg *scope.Graph
-	if g, sgErr := scope.BuildFromIndex(newIdx, s.rootPath); sgErr == nil {
-		sg = g
+	graph := scope.NewGraph()
+	ctx := &feeds.FeedContext{
+		WorkspaceRoot: s.rootPath,
+		Logger:        slog.Default(),
+	}
+	for _, f := range newIdx.Files {
+		src, readErr := os.ReadFile(filepath.Join(s.rootPath, f.Path))
+		if readErr != nil {
+			continue
+		}
+		s.feedEngine.RunFile(graph, f.Path, src, f.Language, ctx)
+	}
+
+	for _, fs := range graph.FileScopes {
+		scope.ResolveAllGraph(fs, graph)
 	}
 
 	s.mu.Lock()
 	s.idx = newIdx
-	s.scopeGraph = sg
+	s.scopeGraph = graph
 	s.mu.Unlock()
 }
 
