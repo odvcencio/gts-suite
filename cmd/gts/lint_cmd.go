@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"sort"
 
@@ -16,17 +15,26 @@ func newLintCmd() *cobra.Command {
 	var jsonOutput bool
 	var rawRules []string
 	var rawPatterns []string
+	var noDefaults bool
+	var thresholdOverrides []string
 
 	cmd := &cobra.Command{
 		Use:     "lint [path]",
 		Aliases: []string{"gtslint"},
 		Short:   "Run structural lint rules against indexed symbols",
-		Args:    cobra.MaximumNArgs(1),
-		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(rawRules) == 0 && len(rawPatterns) == 0 {
-				return errors.New("at least one --rule or --pattern is required")
-			}
+		Long: `Run structural lint rules against indexed symbols.
 
+When no --rule or --pattern flags are given, built-in threshold rules are used
+automatically. These check cyclomatic complexity, cognitive complexity, function
+length, nesting depth, parameter count, fan-in, and fan-out against sensible
+defaults.
+
+Use --no-defaults to disable built-in rules. Use --threshold to override
+individual thresholds (e.g. --threshold cyclomatic=35).
+
+Built-in rules compose with explicit --rule and --pattern flags: all fire together.`,
+		Args: cobra.MaximumNArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
 			target := "."
 			if len(args) == 1 {
 				target = args[0]
@@ -49,6 +57,20 @@ func newLintCmd() *cobra.Command {
 				patterns = append(patterns, pattern)
 			}
 
+			// Determine whether to use built-in threshold rules.
+			useDefaults := !noDefaults
+			var thresholdRules []lint.ThresholdRule
+			if useDefaults {
+				// Copy DefaultRules so overrides don't mutate the package-level slice.
+				thresholdRules = make([]lint.ThresholdRule, len(lint.DefaultRules))
+				copy(thresholdRules, lint.DefaultRules)
+				for _, override := range thresholdOverrides {
+					if err := lint.ParseThresholdOverride(override, thresholdRules); err != nil {
+						return err
+					}
+				}
+			}
+
 			idx, err := loadOrBuild(cachePath, target)
 			if err != nil {
 				return err
@@ -60,6 +82,15 @@ func newLintCmd() *cobra.Command {
 				return err
 			}
 			violations = append(violations, patternViolations...)
+
+			if len(thresholdRules) > 0 {
+				thresholdViolations, err := lint.EvaluateThresholds(idx, thresholdRules)
+				if err != nil {
+					return err
+				}
+				violations = append(violations, thresholdViolations...)
+			}
+
 			sort.Slice(violations, func(i, j int) bool {
 				if violations[i].File == violations[j].File {
 					if violations[i].StartLine == violations[j].StartLine {
@@ -75,22 +106,29 @@ func newLintCmd() *cobra.Command {
 
 			if jsonOutput {
 				return emitJSON(struct {
-					Rules      []lint.Rule         `json:"rules,omitempty"`
-					Patterns   []lint.QueryPattern `json:"patterns,omitempty"`
-					Violations []lint.Violation    `json:"violations,omitempty"`
-					Count      int                 `json:"count"`
+					Rules          []lint.Rule          `json:"rules,omitempty"`
+					Patterns       []lint.QueryPattern  `json:"patterns,omitempty"`
+					ThresholdRules []lint.ThresholdRule  `json:"threshold_rules,omitempty"`
+					Violations     []lint.Violation      `json:"violations,omitempty"`
+					Count          int                   `json:"count"`
 				}{
-					Rules:      rules,
-					Patterns:   patterns,
-					Violations: violations,
-					Count:      len(violations),
+					Rules:          rules,
+					Patterns:       patterns,
+					ThresholdRules: thresholdRules,
+					Violations:     violations,
+					Count:          len(violations),
 				})
 			}
 
 			for _, violation := range violations {
+				severity := violation.Severity
+				if severity == "" {
+					severity = "warn"
+				}
 				if violation.StartLine <= 0 {
 					fmt.Printf(
-						"%s %s %s rule=%s %s\n",
+						"[%s] %s %s %s rule=%s %s\n",
+						severity,
 						violation.File,
 						violation.Kind,
 						violation.Name,
@@ -100,7 +138,8 @@ func newLintCmd() *cobra.Command {
 					continue
 				}
 				fmt.Printf(
-					"%s:%d:%d %s %s rule=%s %s\n",
+					"[%s] %s:%d:%d %s %s rule=%s %s\n",
+					severity,
 					violation.File,
 					violation.StartLine,
 					violation.EndLine,
@@ -110,7 +149,9 @@ func newLintCmd() *cobra.Command {
 					violation.Message,
 				)
 			}
-			fmt.Printf("lint: rules=%d patterns=%d violations=%d\n", len(rules), len(patterns), len(violations))
+
+			thresholdCount := len(thresholdRules)
+			fmt.Printf("lint: rules=%d patterns=%d thresholds=%d violations=%d\n", len(rules), len(patterns), thresholdCount, len(violations))
 			if len(idx.Errors) > 0 {
 				fmt.Printf("lint: parse errors=%d (ignored)\n", len(idx.Errors))
 			}
@@ -130,6 +171,8 @@ func newLintCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringArrayVar(&rawRules, "rule", nil, "lint rule expression (repeatable)")
 	cmd.Flags().StringArrayVar(&rawPatterns, "pattern", nil, "tree-sitter query pattern file (.scm) (repeatable)")
+	cmd.Flags().BoolVar(&noDefaults, "no-defaults", false, "disable built-in threshold rules")
+	cmd.Flags().StringArrayVar(&thresholdOverrides, "threshold", nil, "override a built-in threshold (e.g. cyclomatic=35) (repeatable)")
 	return cmd
 }
 
