@@ -12,6 +12,7 @@ import (
 
 func newImpactCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var changed string
 	var diffRef string
@@ -43,7 +44,7 @@ func newImpactCmd() *cobra.Command {
 				}
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -95,6 +96,7 @@ func newImpactCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringVar(&changed, "changed", "", "comma-separated list of changed symbol names")
 	cmd.Flags().StringVar(&diffRef, "diff", "", "git diff ref (e.g. HEAD~1)")

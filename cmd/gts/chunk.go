@@ -11,6 +11,7 @@ import (
 
 func newChunkCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var tokens int
 	var jsonOutput bool
 
@@ -33,7 +34,7 @@ func newChunkCmd() *cobra.Command {
 				}
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -72,6 +73,7 @@ func newChunkCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().IntVar(&tokens, "tokens", 800, "token budget per chunk")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	return cmd

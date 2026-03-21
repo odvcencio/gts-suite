@@ -39,7 +39,7 @@ func newRefactorCmd() *cobra.Command {
 				target = args[2]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, false)
 			if err != nil {
 				return err
 			}

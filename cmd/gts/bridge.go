@@ -35,7 +35,7 @@ func newBridgeCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, false)
 			if err != nil {
 				return err
 			}

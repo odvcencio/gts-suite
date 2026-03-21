@@ -11,6 +11,7 @@ import (
 
 func newDepsCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var by string
 	var top int
 	var focus string
@@ -37,7 +38,7 @@ func newDepsCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -111,6 +112,7 @@ func newDepsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&by, "by", "package", "graph mode: package or file")
 	cmd.Flags().IntVar(&top, "top", 10, "number of top nodes to show")
 	cmd.Flags().StringVar(&focus, "focus", "", "focus node to inspect incoming/outgoing edges")

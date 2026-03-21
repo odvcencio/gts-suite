@@ -10,6 +10,7 @@ import (
 
 func newCallgraphCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var regexMode bool
 	var depth int
 	var reverse bool
@@ -31,7 +32,7 @@ func newCallgraphCmd() *cobra.Command {
 				target = args[1]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -119,6 +120,7 @@ func newCallgraphCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&regexMode, "regex", false, "treat the first argument as a regular expression")
 	cmd.Flags().IntVar(&depth, "depth", 2, "call graph traversal depth")
 	cmd.Flags().BoolVar(&reverse, "reverse", false, "walk incoming callers instead of outgoing callees")

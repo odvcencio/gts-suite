@@ -68,6 +68,7 @@ func detectGrepMode(pattern string) grepMode {
 
 func newGrepCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var countOnly bool
 	var forceStructural bool
@@ -157,7 +158,7 @@ AUTO-DETECTION:
 			case grepModeStructural:
 				return runStructuralGrep(pattern, target, lang, where, rewrite, jsonOutput, countOnly)
 			case grepModeSelector:
-				return runSelectorGrep(pattern, target, cachePath, jsonOutput, countOnly)
+				return runSelectorGrep(pattern, target, cachePath, noCache, jsonOutput, countOnly)
 			default:
 				// Auto resolved to structural above; this shouldn't happen.
 				return runStructuralGrep(pattern, target, lang, where, rewrite, jsonOutput, countOnly)
@@ -166,6 +167,7 @@ AUTO-DETECTION:
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing (selector mode)")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of matches")
 	cmd.Flags().BoolVarP(&forceStructural, "structural", "S", false, "force structural mode (code patterns)")
@@ -177,13 +179,13 @@ AUTO-DETECTION:
 }
 
 // runSelectorGrep runs the original selector-DSL based grep against the structural index.
-func runSelectorGrep(pattern, target, cachePath string, jsonOutput, countOnly bool) error {
+func runSelectorGrep(pattern, target, cachePath string, noCache, jsonOutput, countOnly bool) error {
 	selector, err := query.ParseSelector(pattern)
 	if err != nil {
 		return err
 	}
 
-	idx, err := loadOrBuild(cachePath, target)
+	idx, err := loadOrBuild(cachePath, target, noCache)
 	if err != nil {
 		return err
 	}

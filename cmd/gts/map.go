@@ -9,6 +9,7 @@ import (
 
 func newMapCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
@@ -22,7 +23,7 @@ func newMapCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -53,6 +54,7 @@ func newMapCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	return cmd
 }

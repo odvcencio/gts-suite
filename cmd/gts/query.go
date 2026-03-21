@@ -34,7 +34,7 @@ func newQueryCmd() *cobra.Command {
 			if len(args) == 2 {
 				target = args[1]
 			}
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, false)
 			if err != nil {
 				return err
 			}

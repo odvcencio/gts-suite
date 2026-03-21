@@ -11,6 +11,7 @@ import (
 
 func newContextCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var rootPath string
 	var line int
 	var tokens int
@@ -25,7 +26,7 @@ func newContextCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
-			idx, err := loadOrBuild(cachePath, rootPath)
+			idx, err := loadOrBuild(cachePath, rootPath, noCache)
 			if err != nil {
 				return err
 			}
@@ -74,6 +75,7 @@ func newContextCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&rootPath, "root", ".", "parse root path when cache is not provided")
 	cmd.Flags().IntVar(&line, "line", 1, "cursor line (1-based)")
 	cmd.Flags().IntVar(&tokens, "tokens", 800, "token budget")
