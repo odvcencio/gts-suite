@@ -279,7 +279,7 @@ func main() {
 	if !ok {
 		t.Fatalf("expected callgraph map result, got %T", callgraphRaw)
 	}
-	edges, ok := callgraph["edges"].([]xref.Edge)
+	edges, ok := callgraph["edges"].([]xref.MaterializedEdge)
 	if !ok {
 		t.Fatalf("expected callgraph edges slice, got %T", callgraph["edges"])
 	}
