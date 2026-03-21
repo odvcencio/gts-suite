@@ -21,7 +21,7 @@ func newScopeCmd() *cobra.Command {
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			filePath := args[0]
-			idx, err := loadOrBuild(cachePath, rootPath)
+			idx, err := loadOrBuild(cachePath, rootPath, false)
 			if err != nil {
 				return err
 			}

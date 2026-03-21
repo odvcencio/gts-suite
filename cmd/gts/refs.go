@@ -12,6 +12,7 @@ import (
 
 func newRefsCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var regexMode bool
 	var jsonOutput bool
 	var countOnly bool
@@ -27,7 +28,7 @@ func newRefsCmd() *cobra.Command {
 				target = args[1]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -98,6 +99,7 @@ func newRefsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&regexMode, "regex", false, "treat the first argument as a regular expression")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of matches")

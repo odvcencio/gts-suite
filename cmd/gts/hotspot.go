@@ -10,6 +10,7 @@ import (
 
 func newHotspotCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var countOnly bool
 	var since string
@@ -26,7 +27,7 @@ func newHotspotCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -70,6 +71,7 @@ func newHotspotCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of hotspots")
 	cmd.Flags().StringVar(&since, "since", "90d", "git log period (e.g. 90d, 6m, 1y)")

@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"fmt"
+	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/odvcencio/gts-suite/pkg/index"
@@ -17,6 +19,13 @@ func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, er
 	if strings.TrimSpace(target) == "" {
 		target = s.defaultRoot
 	}
+	// Auto-discover cached index
+	autoPath := filepath.Join(target, ".gts", "index.json")
+	if _, err := os.Stat(autoPath); err == nil {
+		if idx, err := index.Load(autoPath); err == nil {
+			return idx, nil
+		}
+	}
 	builder := index.NewBuilder()
 	return builder.BuildPath(target)
 }
@@ -30,6 +39,13 @@ func (s *Service) loadIndexFromSource(pathArg, cacheArg string) (*model.Index, e
 	target := strings.TrimSpace(pathArg)
 	if target == "" {
 		target = s.defaultRoot
+	}
+	// Auto-discover cached index
+	autoPath := filepath.Join(target, ".gts", "index.json")
+	if _, err := os.Stat(autoPath); err == nil {
+		if idx, err := index.Load(autoPath); err == nil {
+			return idx, nil
+		}
 	}
 	builder := index.NewBuilder()
 	return builder.BuildPath(target)

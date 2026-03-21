@@ -12,6 +12,7 @@ import (
 
 func newComplexityCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var countOnly bool
 	var minCyclomatic int
@@ -36,7 +37,7 @@ func newComplexityCmd() *cobra.Command {
 				return fmt.Errorf("unsupported --sort %q (expected cyclomatic|cognitive|lines|nesting)", sortField)
 			}
 
-			idx, err := loadOrBuild(cachePath, target)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -109,6 +110,7 @@ func newComplexityCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the number of functions analyzed")
 	cmd.Flags().IntVar(&minCyclomatic, "min-cyclomatic", 0, "minimum cyclomatic complexity to include")

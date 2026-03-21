@@ -13,6 +13,7 @@ import (
 
 func newDeadCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var kind string
 	var includeEntrypoints bool
 	var includeTests bool
@@ -48,7 +49,7 @@ Examples:
 
 			var idx *model.Index
 			for i, target := range targets {
-				built, err := loadOrBuild(cachePath, target)
+				built, err := loadOrBuild(cachePath, target, noCache)
 				if err != nil {
 					return err
 				}
@@ -155,6 +156,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&kind, "kind", "callable", "filter dead definitions by callable|function|method")
 	cmd.Flags().BoolVar(&includeEntrypoints, "include-entrypoints", false, "include main/init functions in dead code results")
 	cmd.Flags().BoolVar(&includeTests, "include-tests", false, "include _test files in dead code results")

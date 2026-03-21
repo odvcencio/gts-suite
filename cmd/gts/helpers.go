@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"os"
+	"path/filepath"
 	"strings"
 
 	"github.com/odvcencio/gts-suite/pkg/index"
@@ -10,9 +11,17 @@ import (
 	"github.com/odvcencio/gts-suite/pkg/xref"
 )
 
-func loadOrBuild(cachePath string, target string) (*model.Index, error) {
+func loadOrBuild(cachePath string, target string, noCache bool) (*model.Index, error) {
 	if strings.TrimSpace(cachePath) != "" {
 		return index.Load(cachePath)
+	}
+	if !noCache {
+		autoPath := filepath.Join(target, ".gts", "index.json")
+		if _, err := os.Stat(autoPath); err == nil {
+			if idx, err := index.Load(autoPath); err == nil {
+				return idx, nil
+			}
+		}
 	}
 	return index.NewBuilder().BuildPath(target)
 }

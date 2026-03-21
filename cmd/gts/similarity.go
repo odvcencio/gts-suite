@@ -12,6 +12,7 @@ import (
 func newSimilarityCmd() *cobra.Command {
 	var cacheA string
 	var cacheB string
+	var noCache bool
 	var threshold float64
 	var jsonOutput bool
 	var method string
@@ -30,7 +31,7 @@ func newSimilarityCmd() *cobra.Command {
 			}
 
 			pathA := args[0]
-			idxA, err := loadOrBuild(cacheA, pathA)
+			idxA, err := loadOrBuild(cacheA, pathA, noCache)
 			if err != nil {
 				return fmt.Errorf("loading index A: %w", err)
 			}
@@ -39,7 +40,7 @@ func newSimilarityCmd() *cobra.Command {
 			pathB := pathA
 			if len(args) == 2 {
 				pathB = args[1]
-				idxB, err = loadOrBuild(cacheB, pathB)
+				idxB, err = loadOrBuild(cacheB, pathB, noCache)
 				if err != nil {
 					return fmt.Errorf("loading index B: %w", err)
 				}
@@ -93,6 +94,7 @@ func newSimilarityCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&cacheA, "cache-a", "", "load index A from cache instead of parsing")
 	cmd.Flags().StringVar(&cacheB, "cache-b", "", "load index B from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().Float64Var(&threshold, "threshold", 0.7, "minimum similarity score (0.0-1.0)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringVar(&method, "method", "both", "match method: exact|fuzzy|both")

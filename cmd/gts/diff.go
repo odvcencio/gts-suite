@@ -26,11 +26,11 @@ func newDiffCmd() *cobra.Command {
 				return err
 			}
 
-			beforeIndex, err := loadOrBuild(beforeCache, beforeTarget)
+			beforeIndex, err := loadOrBuild(beforeCache, beforeTarget, false)
 			if err != nil {
 				return fmt.Errorf("load before snapshot: %w", err)
 			}
-			afterIndex, err := loadOrBuild(afterCache, afterTarget)
+			afterIndex, err := loadOrBuild(afterCache, afterTarget, false)
 			if err != nil {
 				return fmt.Errorf("load after snapshot: %w", err)
 			}
