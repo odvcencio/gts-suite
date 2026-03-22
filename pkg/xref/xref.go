@@ -77,7 +77,7 @@ type internalEdge struct {
 type Graph struct {
 	Root        string           `json:"root"`
 	Definitions []Definition     `json:"definitions,omitempty"`
-	Edges       []Edge           `json:"edges,omitempty"`
+	Edges       []Edge           `json:"-"` // compact; use MaterializeEdges for JSON
 	Unresolved  []UnresolvedCall `json:"unresolved,omitempty"`
 
 	// Index-based lookup maps — values are indices into Definitions or Edges.
@@ -94,10 +94,20 @@ type Graph struct {
 }
 
 // EdgeCaller returns a pointer to the caller Definition for the given edge.
-func (g *Graph) EdgeCaller(e Edge) *Definition { return &g.Definitions[e.CallerIdx] }
+func (g *Graph) EdgeCaller(e Edge) *Definition {
+	if e.CallerIdx < 0 || e.CallerIdx >= len(g.Definitions) {
+		return &Definition{Name: "<invalid>", ID: "<invalid>"}
+	}
+	return &g.Definitions[e.CallerIdx]
+}
 
 // EdgeCallee returns a pointer to the callee Definition for the given edge.
-func (g *Graph) EdgeCallee(e Edge) *Definition { return &g.Definitions[e.CalleeIdx] }
+func (g *Graph) EdgeCallee(e Edge) *Definition {
+	if e.CalleeIdx < 0 || e.CalleeIdx >= len(g.Definitions) {
+		return &Definition{Name: "<invalid>", ID: "<invalid>"}
+	}
+	return &g.Definitions[e.CalleeIdx]
+}
 
 // MaterializeEdge produces a MaterializedEdge with full Definition copies.
 func (g *Graph) MaterializeEdge(e Edge) MaterializedEdge {

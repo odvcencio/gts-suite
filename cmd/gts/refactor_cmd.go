@@ -12,6 +12,7 @@ import (
 
 func newRefactorCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var engine string
 	var updateCallsites bool
 	var crossPackage bool
@@ -39,7 +40,7 @@ func newRefactorCmd() *cobra.Command {
 				target = args[2]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -102,6 +103,7 @@ func newRefactorCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&engine, "engine", "go", "refactor engine: go|treesitter")
 	cmd.Flags().BoolVar(&updateCallsites, "callsites", false, "update resolved same-package callsites")
 	cmd.Flags().BoolVar(&crossPackage, "cross-package", false, "update resolved cross-package callsites within the module")

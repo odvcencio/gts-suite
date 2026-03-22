@@ -11,6 +11,7 @@ import (
 
 func newLintCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var failOnViolations bool
 	var jsonOutput bool
 	var rawRules []string
@@ -71,7 +72,7 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 				}
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -167,6 +168,7 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&failOnViolations, "fail-on-violations", true, "exit non-zero when violations are found")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringArrayVar(&rawRules, "rule", nil, "lint rule expression (repeatable)")

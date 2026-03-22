@@ -1,7 +1,9 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -66,21 +68,7 @@ func newCallgraphCmd() *cobra.Command {
 						UnresolvedCall: len(graph.Unresolved),
 					})
 				}
-				return emitJSON(struct {
-					Roots               []xref.Definition        `json:"roots,omitempty"`
-					Nodes               []xref.Definition        `json:"nodes,omitempty"`
-					Edges               []xref.MaterializedEdge  `json:"edges,omitempty"`
-					Depth               int                      `json:"depth"`
-					Reverse             bool                     `json:"reverse"`
-					UnresolvedCallCount int                      `json:"unresolved_call_count"`
-				}{
-					Roots:               walk.Roots,
-					Nodes:               walk.Nodes,
-					Edges:               walk.MaterializedEdges(),
-					Depth:               walk.Depth,
-					Reverse:             walk.Reverse,
-					UnresolvedCallCount: len(graph.Unresolved),
-				})
+				return streamCallgraphJSON(&graph, walk, len(graph.Unresolved))
 			}
 
 			if countOnly {
@@ -135,4 +123,40 @@ func runCallgraph(args []string) error {
 	cmd.SilenceErrors = true
 	cmd.SetArgs(args)
 	return cmd.Execute()
+}
+
+// streamCallgraphJSON writes callgraph JSON output, materializing one edge at a time
+// instead of building the full []MaterializedEdge slice.
+func streamCallgraphJSON(graph *xref.Graph, walk xref.Walk, unresolvedCount int) error {
+	w := os.Stdout
+	fmt.Fprintf(w, "{\n")
+
+	// Roots
+	rootsData, _ := json.Marshal(walk.Roots)
+	fmt.Fprintf(w, "  \"roots\": %s,\n", string(rootsData))
+
+	// Nodes
+	nodesData, _ := json.Marshal(walk.Nodes)
+	fmt.Fprintf(w, "  \"nodes\": %s,\n", string(nodesData))
+
+	// Edges — stream one at a time
+	fmt.Fprintf(w, "  \"edges\": [\n")
+	for i, edge := range walk.Edges {
+		me := graph.MaterializeEdge(edge)
+		data, err := json.Marshal(me)
+		if err != nil {
+			return err
+		}
+		if i > 0 {
+			fmt.Fprintf(w, ",\n")
+		}
+		fmt.Fprintf(w, "    %s", string(data))
+	}
+	fmt.Fprintf(w, "\n  ],\n")
+
+	fmt.Fprintf(w, "  \"depth\": %d,\n", walk.Depth)
+	fmt.Fprintf(w, "  \"reverse\": %t,\n", walk.Reverse)
+	fmt.Fprintf(w, "  \"unresolved_call_count\": %d\n", unresolvedCount)
+	fmt.Fprintf(w, "}\n")
+	return nil
 }

@@ -22,7 +22,7 @@ func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, er
 	// Auto-discover cached index
 	autoPath := filepath.Join(target, ".gts", "index.json")
 	if _, err := os.Stat(autoPath); err == nil {
-		if idx, err := index.Load(autoPath); err == nil {
+		if idx, loadErr := index.Load(autoPath); loadErr == nil {
 			return idx, nil
 		}
 	}
@@ -43,7 +43,7 @@ func (s *Service) loadIndexFromSource(pathArg, cacheArg string) (*model.Index, e
 	// Auto-discover cached index
 	autoPath := filepath.Join(target, ".gts", "index.json")
 	if _, err := os.Stat(autoPath); err == nil {
-		if idx, err := index.Load(autoPath); err == nil {
+		if idx, loadErr := index.Load(autoPath); loadErr == nil {
 			return idx, nil
 		}
 	}

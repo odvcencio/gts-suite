@@ -15,6 +15,7 @@ import (
 
 func newQueryCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var countOnly bool
 	var captures []string
@@ -34,7 +35,7 @@ func newQueryCmd() *cobra.Command {
 			if len(args) == 2 {
 				target = args[1]
 			}
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -225,6 +226,7 @@ func newQueryCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of captures")
 	cmd.Flags().StringArrayVar(&captures, "capture", nil, "capture name filter (repeatable)")

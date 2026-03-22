@@ -2,6 +2,7 @@ package index
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 
@@ -13,20 +14,41 @@ func Save(path string, idx *model.Index) error {
 		return nil
 	}
 
+	path = filepath.Clean(path)
 	directory := filepath.Dir(path)
 	if err := os.MkdirAll(directory, 0o755); err != nil {
 		return err
 	}
 
-	file, err := os.Create(path)
+	file, err := os.CreateTemp(directory, filepath.Base(path)+".tmp-*")
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	tempPath := file.Name()
+	success := false
+	defer func() {
+		_ = file.Close()
+		if !success {
+			_ = os.Remove(tempPath)
+		}
+	}()
 
 	encoder := json.NewEncoder(file)
 	encoder.SetIndent("", "  ")
-	return encoder.Encode(idx)
+	if err := encoder.Encode(idx); err != nil {
+		return err
+	}
+	if err := file.Chmod(0o644); err != nil {
+		return err
+	}
+	if err := file.Close(); err != nil {
+		return err
+	}
+	if err := os.Rename(tempPath, path); err != nil {
+		return err
+	}
+	success = true
+	return nil
 }
 
 func Load(path string) (*model.Index, error) {
@@ -39,6 +61,9 @@ func Load(path string) (*model.Index, error) {
 	var idx model.Index
 	if err := json.NewDecoder(file).Decode(&idx); err != nil {
 		return nil, err
+	}
+	if idx.Version != "" && idx.Version != schemaVersion {
+		return nil, fmt.Errorf("index schema version mismatch: cache has %q, expected %q", idx.Version, schemaVersion)
 	}
 	return &idx, nil
 }

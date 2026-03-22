@@ -367,6 +367,11 @@ structuralOuter:
 			if limit > 0 && len(matches) >= limit {
 				truncated = true
 				pf.Close()
+				cancel()
+				// Drain remaining channel items so the walker goroutine can exit.
+				for remaining := range ch {
+					remaining.Close()
+				}
 				break structuralOuter
 			}
 		}
@@ -380,10 +385,6 @@ structuralOuter:
 		}
 
 		pf.Close()
-	}
-	// Cancel context to stop the walker goroutine if we broke out early.
-	if truncated {
-		cancel()
 	}
 
 	// Sort results.

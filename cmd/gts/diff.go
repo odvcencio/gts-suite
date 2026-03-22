@@ -13,6 +13,7 @@ import (
 func newDiffCmd() *cobra.Command {
 	var beforeCache string
 	var afterCache string
+	var noCache bool
 	var jsonOutput bool
 
 	cmd := &cobra.Command{
@@ -26,11 +27,11 @@ func newDiffCmd() *cobra.Command {
 				return err
 			}
 
-			beforeIndex, err := loadOrBuild(beforeCache, beforeTarget, false)
+			beforeIndex, err := loadOrBuild(beforeCache, beforeTarget, noCache)
 			if err != nil {
 				return fmt.Errorf("load before snapshot: %w", err)
 			}
-			afterIndex, err := loadOrBuild(afterCache, afterTarget, false)
+			afterIndex, err := loadOrBuild(afterCache, afterTarget, noCache)
 			if err != nil {
 				return fmt.Errorf("load after snapshot: %w", err)
 			}
@@ -74,6 +75,7 @@ func newDiffCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&beforeCache, "before-cache", "", "load before snapshot from cache file")
 	cmd.Flags().StringVar(&afterCache, "after-cache", "", "load after snapshot from cache file")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	return cmd
 }

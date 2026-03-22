@@ -12,6 +12,7 @@ import (
 
 func newCapaCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var category string
 	var minConfidence string
@@ -27,7 +28,7 @@ func newCapaCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -93,6 +94,7 @@ func newCapaCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringVar(&category, "category", "", "filter by capability category")
 	cmd.Flags().StringVar(&minConfidence, "min-confidence", "", "filter by minimum confidence (low, medium, high)")

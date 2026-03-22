@@ -11,6 +11,7 @@ import (
 
 func newYaraCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var jsonOutput bool
 	var ruleName string
 	var minStrings int
@@ -27,7 +28,7 @@ func newYaraCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -72,6 +73,7 @@ func newYaraCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringVar(&ruleName, "rule-name", "generated_rule", "name for the generated YARA rule")
 	cmd.Flags().IntVar(&minStrings, "min-strings", 3, "minimum number of string literals required")

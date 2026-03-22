@@ -10,6 +10,7 @@ import (
 
 func newStatsCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var top int
 	var jsonOutput bool
 
@@ -28,7 +29,7 @@ func newStatsCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -81,6 +82,7 @@ func newStatsCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().IntVar(&top, "top", 10, "number of top files by symbol count")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	return cmd

@@ -2,9 +2,11 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
@@ -17,8 +19,10 @@ func loadOrBuild(cachePath string, target string, noCache bool) (*model.Index, e
 	}
 	if !noCache {
 		autoPath := filepath.Join(target, ".gts", "index.json")
-		if _, err := os.Stat(autoPath); err == nil {
+		if fi, err := os.Stat(autoPath); err == nil {
 			if idx, err := index.Load(autoPath); err == nil {
+				age := time.Since(fi.ModTime()).Truncate(time.Second)
+				fmt.Fprintf(os.Stderr, "index: using cached %s (age %s, pass --no-cache for fresh)\n", autoPath, age)
 				return idx, nil
 			}
 		}

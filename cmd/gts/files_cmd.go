@@ -10,6 +10,7 @@ import (
 
 func newFilesCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var language string
 	var minSymbols int
 	var sortBy string
@@ -34,7 +35,7 @@ func newFilesCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -69,6 +70,7 @@ func newFilesCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&language, "language", "", "filter by language (e.g. go)")
 	cmd.Flags().IntVar(&minSymbols, "min-symbols", 0, "minimum symbols per file")
 	cmd.Flags().StringVar(&sortBy, "sort", "symbols", "sort by symbols|imports|size|path")

@@ -11,6 +11,7 @@ import (
 
 func newBridgeCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var top int
 	var focus string
 	var depth int
@@ -35,7 +36,7 @@ func newBridgeCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -112,6 +113,7 @@ func newBridgeCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().IntVar(&top, "top", 20, "number of top bridge and external rows to show")
 	cmd.Flags().StringVar(&focus, "focus", "", "focus component for bridge traversal")
 	cmd.Flags().IntVar(&depth, "depth", 1, "transitive traversal depth from focus")

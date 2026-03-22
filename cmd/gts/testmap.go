@@ -11,6 +11,7 @@ import (
 
 func newTestmapCmd() *cobra.Command {
 	var cachePath string
+	var noCache bool
 	var kind string
 	var untestedOnly bool
 	var jsonOutput bool
@@ -34,7 +35,7 @@ func newTestmapCmd() *cobra.Command {
 				target = args[0]
 			}
 
-			idx, err := loadOrBuild(cachePath, target, false)
+			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
 			}
@@ -89,6 +90,7 @@ func newTestmapCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
+	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().StringVar(&kind, "kind", "", "filter by function|method (empty for all)")
 	cmd.Flags().BoolVar(&untestedOnly, "untested-only", false, "show only untested symbols")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")

@@ -34,10 +34,15 @@ func (s *Service) callCallgraph(args map[string]any) (any, error) {
 	}
 	walk := graph.Walk(rootIDs, depth, reverse)
 
+	// MaterializedEdges builds full Definition copies for JSON.
+	// The MCP framework serializes the return value, so we can't stream here.
+	// For very large walks, consider adding a depth/edge cap.
+	edges := walk.MaterializedEdges()
+
 	return map[string]any{
 		"roots":                 walk.Roots,
 		"nodes":                 walk.Nodes,
-		"edges":                 walk.MaterializedEdges(),
+		"edges":                 edges,
 		"depth":                 walk.Depth,
 		"reverse":               walk.Reverse,
 		"unresolved_call_count": len(graph.Unresolved),
