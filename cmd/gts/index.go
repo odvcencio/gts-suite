@@ -19,6 +19,21 @@ import (
 	"github.com/odvcencio/gts-suite/pkg/structdiff"
 )
 
+func loadIndexIgnoreLines(target string) ([]string, error) {
+	var lines []string
+	for _, name := range []string{".graftignore", ".gtsignore"} {
+		data, err := os.ReadFile(filepath.Join(target, name))
+		if err != nil {
+			if errors.Is(err, os.ErrNotExist) {
+				continue
+			}
+			return nil, fmt.Errorf("read %s: %w", name, err)
+		}
+		lines = append(lines, strings.Split(string(data), "\n")...)
+	}
+	return lines, nil
+}
+
 func newIndexCmd() *cobra.Command {
 	var outPath string
 	var jsonOutput bool
@@ -55,12 +70,15 @@ func newIndexCmd() *cobra.Command {
 				target = args[0]
 			}
 
+			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+			defer stop()
+
 			builder := index.NewBuilder()
 
-			// Load .gtsignore from target directory, merge with --ignore flags
-			var allIgnoreLines []string
-			if data, err := os.ReadFile(filepath.Join(target, ".gtsignore")); err == nil {
-				allIgnoreLines = append(allIgnoreLines, strings.Split(string(data), "\n")...)
+			// Load repo ignore files, then merge with CLI --ignore flags.
+			allIgnoreLines, err := loadIndexIgnoreLines(target)
+			if err != nil {
+				return err
 			}
 			allIgnoreLines = append(allIgnoreLines, ignorePatterns...)
 			if len(allIgnoreLines) > 0 {
@@ -81,12 +99,15 @@ func newIndexCmd() *cobra.Command {
 				}
 			}
 
-			buildOnce := func(base *model.Index) (*model.Index, index.BuildStats, error) {
-				if incremental {
-					return builder.BuildPathIncremental(context.Background(), target, base)
-				}
-				idx, err := builder.BuildPath(target)
-				return idx, index.BuildStats{}, err
+			indexRoot, err := resolveIndexRoot(target)
+			if err != nil {
+				return err
+			}
+
+			buildOnce := func(base *model.Index, observer func(index.BuildEvent)) (*model.Index, index.BuildStats, error) {
+				return builder.BuildPathIncrementalWithOptions(ctx, target, base, index.BuildOptions{
+					Observer: observer,
+				})
 			}
 
 			buildBase := (*model.Index)(nil)
@@ -94,8 +115,25 @@ func newIndexCmd() *cobra.Command {
 				buildBase = previous
 			}
 
-			idx, stats, err := buildOnce(buildBase)
+			checkpointWriter := newIndexCheckpointWriter(outPath, indexRoot, buildBase)
+
+			idx, stats, err := buildOnce(buildBase, checkpointWriter.Observe)
 			if err != nil {
+				if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+					if checkpointWriter != nil {
+						if flushErr := checkpointWriter.Flush("interrupt", stats); flushErr != nil {
+							fmt.Fprintf(os.Stderr, "index checkpoint save error: %v\n", flushErr)
+						}
+						return exitCodeError{
+							code: 130,
+							err:  fmt.Errorf("index interrupted; partial cache saved to %s", outPath),
+						}
+					}
+					return exitCodeError{
+						code: 130,
+						err:  errors.New("index interrupted"),
+					}
+				}
 				return err
 			}
 
@@ -106,7 +144,7 @@ func newIndexCmd() *cobra.Command {
 				changed = report.Stats.ChangedFiles > 0 || !parseErrorsEqual(previous.Errors, idx.Errors)
 			}
 
-			if strings.TrimSpace(outPath) != "" && (!onceIfChanged || changed || !hasBaseline) {
+			if strings.TrimSpace(outPath) != "" && (!onceIfChanged || changed || !hasBaseline || checkpointWriter.SavedAny()) {
 				if err := index.Save(outPath, idx); err != nil {
 					return err
 				}
@@ -146,8 +184,6 @@ func newIndexCmd() *cobra.Command {
 			}
 
 			fmt.Printf("watching: interval=%s target=%s subfile-incremental=%t\n", interval.String(), target, subfileIncremental)
-			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-			defer stop()
 			watchState := index.NewWatchState()
 			defer watchState.Release()
 
@@ -169,7 +205,7 @@ func newIndexCmd() *cobra.Command {
 						SubfileIncremental: true,
 					})
 				} else {
-					next, nextStats, err = buildOnce(base)
+					next, nextStats, err = buildOnce(base, nil)
 					if subfileIncremental {
 						watchState.Clear()
 					}
@@ -249,7 +285,7 @@ func newIndexCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&reportChanges, "report-changes", false, "print grouped structural change summary against previous cache")
 	cmd.Flags().BoolVar(&onceIfChanged, "once-if-changed", false, "exit with code 2 when structural changes are detected")
 	cmd.Flags().DurationVar(&interval, "interval", 2*time.Second, "poll interval for watch mode")
-	cmd.Flags().StringArrayVar(&ignorePatterns, "ignore", nil, "additional ignore patterns (repeatable, merged with .gtsignore)")
+	cmd.Flags().StringArrayVar(&ignorePatterns, "ignore", nil, "additional ignore patterns (repeatable, merged with .graftignore and .gtsignore)")
 	return cmd
 }
 
