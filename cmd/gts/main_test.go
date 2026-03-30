@@ -72,7 +72,7 @@ func TestRootCmd_HelpSubcommand(t *testing.T) {
 		t.Fatalf("Execute returned error: %v", err)
 	}
 	text := output.String()
-	if !strings.Contains(text, "Structural grep over indexed symbols") {
+	if !strings.Contains(text, "Structural grep over source code using two complementary engines.") {
 		t.Fatalf("expected command description in help output, got %q", text)
 	}
 }
