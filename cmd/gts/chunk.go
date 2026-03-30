@@ -14,6 +14,8 @@ func newChunkCmd() *cobra.Command {
 	var noCache bool
 	var tokens int
 	var jsonOutput bool
+	var lang string
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "chunk [path]",
@@ -39,12 +41,27 @@ func newChunkCmd() *cobra.Command {
 				return err
 			}
 
+			if lang != "" {
+				filtered := idx.Files[:0]
+				for _, f := range idx.Files {
+					if strings.EqualFold(f.Language, lang) {
+						filtered = append(filtered, f)
+					}
+				}
+				idx.Files = filtered
+			}
+
 			report, err := chunk.Build(idx, chunk.Options{
 				TokenBudget: tokens,
 				FilterPath:  filter,
 			})
 			if err != nil {
 				return err
+			}
+
+			if countOnly {
+				fmt.Println(report.ChunkCount)
+				return nil
 			}
 
 			if jsonOutput {
@@ -76,6 +93,8 @@ func newChunkCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().IntVar(&tokens, "tokens", 800, "token budget per chunk")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().StringVar(&lang, "lang", "", "filter by file language (e.g. go, python, typescript)")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of chunks")
 	return cmd
 }
 

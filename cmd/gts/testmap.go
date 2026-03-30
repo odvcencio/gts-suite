@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -16,6 +17,7 @@ func newTestmapCmd() *cobra.Command {
 	var untestedOnly bool
 	var jsonOutput bool
 	var countOnly bool
+	var limit int
 
 	cmd := &cobra.Command{
 		Use:     "testmap [path]",
@@ -48,16 +50,39 @@ func newTestmapCmd() *cobra.Command {
 				return err
 			}
 
+			truncated := false
+			if limit > 0 && len(report.Mappings) > limit {
+				report.Mappings = report.Mappings[:limit]
+				truncated = true
+			}
+
 			if jsonOutput {
 				if countOnly {
 					return emitJSON(struct {
 						TestedCount   int     `json:"tested_count"`
 						UntestedCount int     `json:"untested_count"`
 						Coverage      float64 `json:"coverage"`
+						Truncated     bool    `json:"truncated,omitempty"`
 					}{
 						TestedCount:   report.TestedCount,
 						UntestedCount: report.UntestedCount,
 						Coverage:      report.Coverage,
+						Truncated:     truncated,
+					})
+				}
+				if truncated {
+					return emitJSON(struct {
+						TestedCount   int                    `json:"tested_count"`
+						UntestedCount int                    `json:"untested_count"`
+						Coverage      float64                `json:"coverage"`
+						Truncated     bool                   `json:"truncated"`
+						Mappings      []testmap.TestMapping  `json:"mappings,omitempty"`
+					}{
+						TestedCount:   report.TestedCount,
+						UntestedCount: report.UntestedCount,
+						Coverage:      report.Coverage,
+						Truncated:     true,
+						Mappings:      report.Mappings,
 					})
 				}
 				return emitJSON(report)
@@ -66,6 +91,9 @@ func newTestmapCmd() *cobra.Command {
 			if countOnly {
 				fmt.Printf("tested=%d untested=%d coverage=%.1f%%\n",
 					report.TestedCount, report.UntestedCount, report.Coverage*100)
+				if truncated {
+					fmt.Printf("truncated: limit=%d\n", limit)
+				}
 				return nil
 			}
 
@@ -85,6 +113,9 @@ func newTestmapCmd() *cobra.Command {
 			}
 			fmt.Printf("testmap: tested=%d untested=%d coverage=%.1f%%\n",
 				report.TestedCount, report.UntestedCount, report.Coverage*100)
+			if truncated {
+				fmt.Fprintf(os.Stderr, "warning: results truncated at limit=%d, use --limit 0 for all\n", limit)
+			}
 			return nil
 		},
 	}
@@ -95,6 +126,7 @@ func newTestmapCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&untestedOnly, "untested-only", false, "show only untested symbols")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print summary counts only")
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum number of results (0 for unlimited)")
 	return cmd
 }
 

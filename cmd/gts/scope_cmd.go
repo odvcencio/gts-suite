@@ -14,6 +14,7 @@ func newScopeCmd() *cobra.Command {
 	var rootPath string
 	var line int
 	var jsonOutput bool
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "scope <file>",
@@ -33,6 +34,11 @@ func newScopeCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+
+			if countOnly {
+				fmt.Println(len(report.Symbols))
+				return nil
 			}
 
 			if jsonOutput {
@@ -63,6 +69,7 @@ func newScopeCmd() *cobra.Command {
 	cmd.Flags().StringVar(&rootPath, "root", ".", "parse root path when cache is not provided")
 	cmd.Flags().IntVar(&line, "line", 1, "cursor line (1-based)")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of symbols in scope")
 	return cmd
 }
 

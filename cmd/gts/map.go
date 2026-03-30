@@ -16,6 +16,7 @@ func newMapCmd() *cobra.Command {
 	var noCache bool
 	var jsonOutput bool
 	var limit int
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "map [path]",
@@ -31,6 +32,11 @@ func newMapCmd() *cobra.Command {
 			idx, err := loadOrBuild(cachePath, target, noCache)
 			if err != nil {
 				return err
+			}
+
+			if countOnly {
+				fmt.Println(len(idx.Files))
+				return nil
 			}
 
 			if jsonOutput {
@@ -71,6 +77,7 @@ func newMapCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().IntVar(&limit, "limit", 0, "limit number of files in output (0 for all)")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of files")
 	return cmd
 }
 

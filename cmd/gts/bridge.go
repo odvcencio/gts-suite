@@ -17,6 +17,8 @@ func newBridgeCmd() *cobra.Command {
 	var depth int
 	var reverse bool
 	var jsonOutput bool
+	var countOnly bool
+	var dotOutput bool
 
 	cmd := &cobra.Command{
 		Use:     "bridge [path]",
@@ -49,6 +51,20 @@ func newBridgeCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+
+			if dotOutput {
+				fmt.Println("digraph bridge {")
+				for _, edge := range report.TopBridges {
+					fmt.Printf("  %q -> %q;\n", edge.From, edge.To)
+				}
+				fmt.Println("}")
+				return nil
+			}
+
+			if countOnly {
+				fmt.Println(report.BridgeCount)
+				return nil
 			}
 
 			if jsonOutput {
@@ -119,6 +135,8 @@ func newBridgeCmd() *cobra.Command {
 	cmd.Flags().IntVar(&depth, "depth", 1, "transitive traversal depth from focus")
 	cmd.Flags().BoolVar(&reverse, "reverse", false, "walk reverse bridge direction from focus")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of bridge edges")
+	cmd.Flags().BoolVar(&dotOutput, "dot", false, "emit DOT graph for Graphviz visualization")
 	return cmd
 }
 

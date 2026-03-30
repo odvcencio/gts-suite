@@ -19,6 +19,8 @@ func newDepsCmd() *cobra.Command {
 	var reverse bool
 	var includeEdges bool
 	var jsonOutput bool
+	var countOnly bool
+	var dotOutput bool
 
 	cmd := &cobra.Command{
 		Use:     "deps [path]",
@@ -49,10 +51,24 @@ func newDepsCmd() *cobra.Command {
 				Focus:        focus,
 				Depth:        depth,
 				Reverse:      reverse,
-				IncludeEdges: includeEdges || jsonOutput,
+				IncludeEdges: includeEdges || jsonOutput || dotOutput,
 			})
 			if err != nil {
 				return err
+			}
+
+			if dotOutput {
+				fmt.Println("digraph deps {")
+				for _, edge := range report.Edges {
+					fmt.Printf("  %q -> %q;\n", edge.From, edge.To)
+				}
+				fmt.Println("}")
+				return nil
+			}
+
+			if countOnly {
+				fmt.Println(report.EdgeCount)
+				return nil
 			}
 
 			if jsonOutput {
@@ -120,6 +136,8 @@ func newDepsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&reverse, "reverse", false, "walk reverse dependencies from focus")
 	cmd.Flags().BoolVar(&includeEdges, "edges", false, "include full edge list in output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of dependency edges")
+	cmd.Flags().BoolVar(&dotOutput, "dot", false, "emit DOT graph for Graphviz visualization")
 	return cmd
 }
 

@@ -18,6 +18,7 @@ func newSimilarityCmd() *cobra.Command {
 	var method string
 	var top int
 	var maxFuncs int
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "similarity <path-a> [path-b]",
@@ -66,6 +67,11 @@ func newSimilarityCmd() *cobra.Command {
 				pairs = filtered
 			}
 
+			if countOnly {
+				fmt.Println(len(pairs))
+				return nil
+			}
+
 			if jsonOutput {
 				return emitJSON(struct {
 					Threshold float64           `json:"threshold"`
@@ -102,5 +108,6 @@ func newSimilarityCmd() *cobra.Command {
 	cmd.Flags().StringVar(&method, "method", "both", "match method: exact|fuzzy|both")
 	cmd.Flags().IntVar(&top, "top", 100, "limit to top N results (0 for all)")
 	cmd.Flags().IntVar(&maxFuncs, "max-funcs", 2000, "max functions per index to compare (0 for all, keeps largest)")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of similar pairs")
 	return cmd
 }

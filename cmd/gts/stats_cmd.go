@@ -13,6 +13,7 @@ func newStatsCmd() *cobra.Command {
 	var noCache bool
 	var top int
 	var jsonOutput bool
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "stats [path]",
@@ -39,6 +40,11 @@ func newStatsCmd() *cobra.Command {
 			})
 			if err != nil {
 				return err
+			}
+
+			if countOnly {
+				fmt.Println(report.FileCount)
+				return nil
 			}
 
 			if jsonOutput {
@@ -85,6 +91,7 @@ func newStatsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().IntVar(&top, "top", 10, "number of top files by symbol count")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the total file count")
 	return cmd
 }
 

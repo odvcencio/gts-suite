@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -18,6 +19,8 @@ func newCallgraphCmd() *cobra.Command {
 	var reverse bool
 	var jsonOutput bool
 	var countOnly bool
+	var dotOutput bool
+	var kind string
 
 	cmd := &cobra.Command{
 		Use:     "calls <name|regex> [path]",
@@ -48,11 +51,42 @@ func newCallgraphCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+
+			if kind != "" {
+				var prefix string
+				switch strings.ToLower(kind) {
+				case "function":
+					prefix = "function"
+				case "method":
+					prefix = "method"
+				default:
+					return fmt.Errorf("unsupported --kind %q (expected function|method)", kind)
+				}
+				filtered := roots[:0]
+				for _, r := range roots {
+					if strings.Contains(r.Kind, prefix) {
+						filtered = append(filtered, r)
+					}
+				}
+				roots = filtered
+			}
+
 			rootIDs := make([]string, 0, len(roots))
 			for _, root := range roots {
 				rootIDs = append(rootIDs, root.ID)
 			}
 			walk := graph.Walk(rootIDs, depth, reverse)
+
+			if dotOutput {
+				fmt.Println("digraph callgraph {")
+				for _, edge := range walk.Edges {
+					caller := graph.EdgeCaller(edge)
+					callee := graph.EdgeCallee(edge)
+					fmt.Printf("  %q -> %q;\n", definitionLabel(*caller), definitionLabel(*callee))
+				}
+				fmt.Println("}")
+				return nil
+			}
 
 			if jsonOutput {
 				if countOnly {
@@ -114,6 +148,8 @@ func newCallgraphCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&reverse, "reverse", false, "walk incoming callers instead of outgoing callees")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of traversed edges")
+	cmd.Flags().BoolVar(&dotOutput, "dot", false, "emit DOT graph for Graphviz visualization")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter root definitions by kind (function|method)")
 	return cmd
 }
 

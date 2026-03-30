@@ -15,6 +15,7 @@ func newDiffCmd() *cobra.Command {
 	var afterCache string
 	var noCache bool
 	var jsonOutput bool
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "diff [before-path] [after-path]",
@@ -37,6 +38,12 @@ func newDiffCmd() *cobra.Command {
 			}
 
 			report := structdiff.Compare(beforeIndex, afterIndex)
+
+			if countOnly {
+				fmt.Println(report.Stats.AddedSymbols + report.Stats.RemovedSymbols + report.Stats.ModifiedSymbols)
+				return nil
+			}
+
 			if jsonOutput {
 				return emitJSON(report)
 			}
@@ -77,6 +84,7 @@ func newDiffCmd() *cobra.Command {
 	cmd.Flags().StringVar(&afterCache, "after-cache", "", "load after snapshot from cache file")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of changed symbols")
 	return cmd
 }
 

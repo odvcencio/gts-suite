@@ -18,6 +18,7 @@ func newRefsCmd() *cobra.Command {
 	var jsonOutput bool
 	var countOnly bool
 	var limit int
+	var lang string
 
 	cmd := &cobra.Command{
 		Use:     "refs <name|regex> [path]",
@@ -53,6 +54,9 @@ func newRefsCmd() *cobra.Command {
 			matches := make([]referenceMatch, 0, 256)
 		outer:
 			for _, file := range idx.Files {
+				if lang != "" && !strings.EqualFold(file.Language, lang) {
+					continue
+				}
 				for _, reference := range file.References {
 					if !matchReference(reference.Name) {
 						continue
@@ -125,6 +129,7 @@ func newRefsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of matches")
 	cmd.Flags().IntVar(&limit, "limit", 1000, "maximum number of results (0 for unlimited)")
+	cmd.Flags().StringVar(&lang, "lang", "", "filter by file language (e.g. go, python, typescript)")
 	return cmd
 }
 

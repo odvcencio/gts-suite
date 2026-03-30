@@ -18,6 +18,7 @@ func newQueryCmd() *cobra.Command {
 	var noCache bool
 	var jsonOutput bool
 	var countOnly bool
+	var limit int
 	var captures []string
 
 	cmd := &cobra.Command{
@@ -58,7 +59,9 @@ func newQueryCmd() *cobra.Command {
 			langByName := map[string]*gotreesitter.Language{}
 			parserByLanguage := map[string]*gotreesitter.Parser{}
 
+			truncated := false
 			results := make([]queryCaptureMatch, 0, idx.SymbolCount())
+		fileLoop:
 			for _, file := range idx.Files {
 				entry, ok := entriesByLanguage[file.Language]
 				if !ok {
@@ -151,6 +154,11 @@ func newQueryCmd() *cobra.Command {
 							StartColumn: startColumn,
 							EndColumn:   endColumn,
 						})
+						if limit > 0 && len(results) >= limit {
+							truncated = true
+							tree.Release()
+							break fileLoop
+						}
 					}
 				}
 				tree.Release()
@@ -184,9 +192,24 @@ func newQueryCmd() *cobra.Command {
 				if countOnly {
 					return emitJSON(struct {
 						Count          int                  `json:"count"`
+						Truncated      bool                 `json:"truncated,omitempty"`
 						LanguageErrors []queryLanguageError `json:"language_errors,omitempty"`
 					}{
 						Count:          len(results),
+						Truncated:      truncated,
+						LanguageErrors: languageErrors,
+					})
+				}
+				if truncated {
+					return emitJSON(struct {
+						Matches        []queryCaptureMatch  `json:"matches,omitempty"`
+						Count          int                  `json:"count"`
+						Truncated      bool                 `json:"truncated"`
+						LanguageErrors []queryLanguageError `json:"language_errors,omitempty"`
+					}{
+						Matches:        results,
+						Count:          len(results),
+						Truncated:      true,
 						LanguageErrors: languageErrors,
 					})
 				}
@@ -207,6 +230,9 @@ func newQueryCmd() *cobra.Command {
 
 			if countOnly {
 				fmt.Println(len(results))
+				if truncated {
+					fmt.Printf("truncated: limit=%d\n", limit)
+				}
 				return nil
 			}
 
@@ -221,6 +247,9 @@ func newQueryCmd() *cobra.Command {
 					match.Text,
 				)
 			}
+			if truncated {
+				fmt.Fprintf(os.Stderr, "warning: results truncated at limit=%d, use --limit 0 for all\n", limit)
+			}
 			return nil
 		},
 	}
@@ -229,6 +258,7 @@ func newQueryCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of captures")
+	cmd.Flags().IntVar(&limit, "limit", 1000, "maximum number of results (0 for unlimited)")
 	cmd.Flags().StringArrayVar(&captures, "capture", nil, "capture name filter (repeatable)")
 	return cmd
 }

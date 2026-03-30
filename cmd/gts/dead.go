@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 	"strings"
 
@@ -19,6 +20,7 @@ func newDeadCmd() *cobra.Command {
 	var includeTests bool
 	var jsonOutput bool
 	var countOnly bool
+	var limit int
 
 	cmd := &cobra.Command{
 		Use:     "dead [path...]",
@@ -106,14 +108,37 @@ Examples:
 				return matches[i].File < matches[j].File
 			})
 
+			truncated := false
+			if limit > 0 && len(matches) > limit {
+				matches = matches[:limit]
+				truncated = true
+			}
+
 			if jsonOutput {
 				if countOnly {
 					return emitJSON(struct {
-						Count   int `json:"count"`
-						Scanned int `json:"scanned"`
+						Count     int  `json:"count"`
+						Scanned   int  `json:"scanned"`
+						Truncated bool `json:"truncated,omitempty"`
 					}{
-						Count:   len(matches),
-						Scanned: scanned,
+						Count:     len(matches),
+						Scanned:   scanned,
+						Truncated: truncated,
+					})
+				}
+				if truncated {
+					return emitJSON(struct {
+						Kind      string      `json:"kind"`
+						Scanned   int         `json:"scanned"`
+						Count     int         `json:"count"`
+						Truncated bool        `json:"truncated"`
+						Matches   []deadMatch `json:"matches,omitempty"`
+					}{
+						Kind:      mode,
+						Scanned:   scanned,
+						Count:     len(matches),
+						Truncated: true,
+						Matches:   matches,
 					})
 				}
 				return emitJSON(struct {
@@ -131,6 +156,9 @@ Examples:
 
 			if countOnly {
 				fmt.Println(len(matches))
+				if truncated {
+					fmt.Printf("truncated: limit=%d\n", limit)
+				}
 				return nil
 			}
 
@@ -151,6 +179,9 @@ Examples:
 				)
 			}
 			fmt.Printf("dead: kind=%s scanned=%d matches=%d\n", mode, scanned, len(matches))
+			if truncated {
+				fmt.Fprintf(os.Stderr, "warning: results truncated at limit=%d, use --limit 0 for all\n", limit)
+			}
 			return nil
 		},
 	}
@@ -162,6 +193,7 @@ Examples:
 	cmd.Flags().BoolVar(&includeTests, "include-tests", false, "include _test files in dead code results")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print the number of dead definitions")
+	cmd.Flags().IntVar(&limit, "limit", 0, "maximum number of results (0 for unlimited)")
 	return cmd
 }
 

@@ -17,6 +17,8 @@ func newImpactCmd() *cobra.Command {
 	var changed string
 	var diffRef string
 	var maxDepth int
+	var countOnly bool
+	var kind string
 
 	cmd := &cobra.Command{
 		Use:     "impact [symbol] [path]",
@@ -70,6 +72,31 @@ func newImpactCmd() *cobra.Command {
 				return err
 			}
 
+			if kind != "" {
+				var prefix string
+				switch strings.ToLower(kind) {
+				case "function":
+					prefix = "function"
+				case "method":
+					prefix = "method"
+				default:
+					return fmt.Errorf("unsupported --kind %q (expected function|method)", kind)
+				}
+				filtered := result.Affected[:0]
+				for _, sym := range result.Affected {
+					if strings.Contains(sym.Kind, prefix) {
+						filtered = append(filtered, sym)
+					}
+				}
+				result.Affected = filtered
+				result.TotalAffected = len(filtered)
+			}
+
+			if countOnly {
+				fmt.Println(result.TotalAffected)
+				return nil
+			}
+
 			if jsonOutput {
 				return emitJSON(result)
 			}
@@ -101,6 +128,8 @@ func newImpactCmd() *cobra.Command {
 	cmd.Flags().StringVar(&changed, "changed", "", "comma-separated list of changed symbol names")
 	cmd.Flags().StringVar(&diffRef, "diff", "", "git diff ref (e.g. HEAD~1)")
 	cmd.Flags().IntVar(&maxDepth, "max-depth", 10, "max reverse walk depth")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of impacted symbols")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter affected symbols by kind (function|method)")
 	return cmd
 }
 

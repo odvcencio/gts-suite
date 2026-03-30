@@ -16,6 +16,7 @@ func newCapaCmd() *cobra.Command {
 	var jsonOutput bool
 	var category string
 	var minConfidence string
+	var countOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "capa [path]",
@@ -61,6 +62,11 @@ func newCapaCmd() *cobra.Command {
 				return matches[i].Rule.Category < matches[j].Rule.Category
 			})
 
+			if countOnly {
+				fmt.Println(len(matches))
+				return nil
+			}
+
 			if jsonOutput {
 				return emitJSON(struct {
 					Count   int          `json:"count"`
@@ -98,6 +104,7 @@ func newCapaCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().StringVar(&category, "category", "", "filter by capability category")
 	cmd.Flags().StringVar(&minConfidence, "min-confidence", "", "filter by minimum confidence (low, medium, high)")
+	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of detected capabilities")
 	return cmd
 }
 

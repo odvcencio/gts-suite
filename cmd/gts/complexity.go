@@ -18,6 +18,7 @@ func newComplexityCmd() *cobra.Command {
 	var minCyclomatic int
 	var sortField string
 	var top int
+	var kind string
 
 	cmd := &cobra.Command{
 		Use:     "complexity [path]",
@@ -56,6 +57,26 @@ func newComplexityCmd() *cobra.Command {
 			graph, err := xref.Build(idx)
 			if err == nil {
 				complexity.EnrichWithXref(report, graph)
+			}
+
+			if kind != "" {
+				var prefix string
+				switch strings.ToLower(kind) {
+				case "function":
+					prefix = "function"
+				case "method":
+					prefix = "method"
+				default:
+					return fmt.Errorf("unsupported --kind %q (expected function|method)", kind)
+				}
+				filtered := report.Functions[:0]
+				for _, fn := range report.Functions {
+					if strings.Contains(fn.Kind, prefix) {
+						filtered = append(filtered, fn)
+					}
+				}
+				report.Functions = filtered
+				report.Summary.Count = len(filtered)
 			}
 
 			if jsonOutput {
@@ -116,5 +137,6 @@ func newComplexityCmd() *cobra.Command {
 	cmd.Flags().IntVar(&minCyclomatic, "min-cyclomatic", 0, "minimum cyclomatic complexity to include")
 	cmd.Flags().StringVar(&sortField, "sort", "cyclomatic", "sort by cyclomatic|cognitive|lines|nesting")
 	cmd.Flags().IntVar(&top, "top", 0, "limit output to top N functions")
+	cmd.Flags().StringVar(&kind, "kind", "", "filter by symbol kind (function|method)")
 	return cmd
 }
