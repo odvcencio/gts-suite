@@ -11,44 +11,36 @@ import (
 	"github.com/odvcencio/gts-suite/pkg/structdiff"
 )
 
-func TestNewRootCmd_HasCoreCommandsAndAliases(t *testing.T) {
+func TestNewRootCmd_HasGroups(t *testing.T) {
 	root := newRootCmd()
 
-	expected := map[string]string{
-		"index":     "gtsindex",
-		"map":       "gtsmap",
-		"files":     "gtsfiles",
-		"stats":     "gtsstats",
-		"deps":      "gtsdeps",
-		"bridge":    "gtsbridge",
-		"grep":      "gtsgrep",
-		"refs":      "gtsrefs",
-		"callgraph": "gtscallgraph",
-		"dead":      "gtsdead",
-		"query":     "gtsquery",
-		"mcp":       "gtsmcp",
-		"diff":      "gtsdiff",
-		"refactor":  "gtsrefactor",
-		"chunk":     "gtschunk",
-		"scope":     "gtsscope",
-		"context":   "gtscontext",
-		"lint":      "gtslint",
-	}
-
-	for name, alias := range expected {
+	groups := []string{"index", "search", "graph", "analyze", "transform", "mcp"}
+	for _, name := range groups {
 		sub, _, err := root.Find([]string{name})
 		if err != nil || sub == root {
-			t.Fatalf("missing subcommand %q", name)
+			t.Fatalf("missing top-level command %q", name)
 		}
-		found := false
-		for _, a := range sub.Aliases {
-			if a == alias {
-				found = true
-				break
-			}
-		}
-		if !found {
-			t.Fatalf("subcommand %q missing alias %q, has %v", name, alias, sub.Aliases)
+	}
+
+	// Verify a sampling of subcommands under groups.
+	subcommands := []struct {
+		group string
+		name  string
+	}{
+		{"index", "build"},
+		{"index", "map"},
+		{"index", "stats"},
+		{"search", "grep"},
+		{"search", "refs"},
+		{"graph", "calls"},
+		{"graph", "dead"},
+		{"analyze", "lint"},
+		{"transform", "refactor"},
+	}
+	for _, sc := range subcommands {
+		sub, _, err := root.Find([]string{sc.group, sc.name})
+		if err != nil || sub == root {
+			t.Fatalf("missing subcommand %q under group %q", sc.name, sc.group)
 		}
 	}
 }
@@ -67,7 +59,7 @@ func TestRootCmd_HelpSubcommand(t *testing.T) {
 	cmd := newRootCmd()
 	var output bytes.Buffer
 	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"help", "grep"})
+	cmd.SetArgs([]string{"help", "search", "grep"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatalf("Execute returned error: %v", err)
 	}

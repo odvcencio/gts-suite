@@ -34,7 +34,7 @@ func loadIndexIgnoreLines(target string) ([]string, error) {
 	return lines, nil
 }
 
-func newIndexCmd() *cobra.Command {
+func newIndexBuildCmd() *cobra.Command {
 	var outPath string
 	var jsonOutput bool
 	var incremental bool
@@ -47,7 +47,7 @@ func newIndexCmd() *cobra.Command {
 	var ignorePatterns []string
 
 	cmd := &cobra.Command{
-		Use:     "index [path]",
+		Use:     "build [path]",
 		Aliases: []string{"gtsindex"},
 		Short:   "Build a structural index and optionally cache it",
 		Args:    cobra.MaximumNArgs(1),
@@ -290,7 +290,7 @@ func newIndexCmd() *cobra.Command {
 }
 
 func runIndex(args []string) error {
-	cmd := newIndexCmd()
+	cmd := newIndexBuildCmd()
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
 	cmd.SetArgs(args)

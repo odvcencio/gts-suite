@@ -20,8 +20,8 @@ func newCallgraphCmd() *cobra.Command {
 	var countOnly bool
 
 	cmd := &cobra.Command{
-		Use:     "callgraph <name|regex> [path]",
-		Aliases: []string{"gtscallgraph"},
+		Use:     "calls <name|regex> [path]",
+		Aliases: []string{"callgraph", "gtscallgraph"},
 		Short:   "Build call graph edges rooted at matching callable definitions",
 		Args:    cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
