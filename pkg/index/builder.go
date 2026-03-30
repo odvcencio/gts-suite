@@ -99,6 +99,14 @@ func (lp *lazyParser) Language() string {
 	return lp.entry.Name
 }
 
+func (lp *lazyParser) TreesitterParser() (*treesitter.Parser, error) {
+	lp.once.Do(lp.init)
+	if lp.err != nil {
+		return nil, lp.err
+	}
+	return lp.parser, nil
+}
+
 func (lp *lazyParser) Parse(path string, src []byte) (model.FileSummary, error) {
 	lp.once.Do(lp.init)
 	if lp.err != nil {
@@ -140,12 +148,19 @@ func normalizeExtension(extension string) string {
 }
 
 func (b *Builder) BuildPath(path string) (*model.Index, error) {
-	idx, _, err := b.BuildPathIncremental(context.Background(), path, nil)
+	idx, _, err := b.BuildPathIncrementalWithOptions(context.Background(), path, nil, BuildOptions{})
 	return idx, err
 }
 
 func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previous *model.Index) (*model.Index, BuildStats, error) {
+	return b.BuildPathIncrementalWithOptions(ctx, path, previous, BuildOptions{})
+}
+
+func (b *Builder) BuildPathIncrementalWithOptions(ctx context.Context, path string, previous *model.Index, opts BuildOptions) (*model.Index, BuildStats, error) {
 	stats := BuildStats{}
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	if strings.TrimSpace(path) == "" {
 		path = "."
@@ -164,18 +179,14 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 
 	// Single-file mode: parse one file directly without the gateway walk.
 	if !info.IsDir() {
-		return b.buildSingleFile(target, info, previous)
+		return b.buildSingleFileWithOptions(ctx, target, info, previous, opts)
 	}
 
 	root := filepath.Clean(target)
 
-	index := &model.Index{
-		Version:     schemaVersion,
-		Root:        root,
-		GeneratedAt: time.Now().UTC(),
-	}
-
 	previousByPath := previousFilesByPath(previous, root)
+	filesByPath := make(map[string]model.FileSummary, len(previousByPath))
+	errorsByPath := map[string]model.ParseError{}
 
 	// Build the gateway policy.
 	policy := grammars.DefaultPolicy()
@@ -228,11 +239,6 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 	// on disk and unchanged. We must also walk to discover them, but the
 	// gateway's ShouldParse=false means they won't appear in the channel.
 	// We pre-collect reused entries before the walk.
-	type reusedEntry struct {
-		relPath string
-		summary model.FileSummary
-	}
-	var reused []reusedEntry
 	for relPath, prev := range previousByPath {
 		absPath := filepath.Join(root, filepath.FromSlash(relPath))
 		fi, statErr := os.Stat(absPath)
@@ -272,19 +278,18 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 		for i := range entry.References {
 			entry.References[i].File = relPath
 		}
-		reused = append(reused, reusedEntry{relPath: relPath, summary: entry})
+		filesByPath[relPath] = entry
+		stats.CandidateFiles++
 		stats.ReusedFiles++
+		emitBuildEvent(opts, BuildEvent{
+			Kind:    BuildEventReused,
+			Path:    relPath,
+			Summary: entry,
+			Stats:   stats,
+		})
 	}
 
-	// Stream parsed files from the gateway.
-	type parsedEntry struct {
-		relPath string
-		summary model.FileSummary
-		err     error
-	}
-	var parsed []parsedEntry
-
-	results, _ := grammars.WalkAndParse(ctx, root, policy)
+	results, statsFn := grammars.WalkAndParse(ctx, root, policy)
 	for file := range results {
 		relPath, relErr := filepath.Rel(root, file.Path)
 		if relErr != nil {
@@ -294,20 +299,24 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 
 		stats.CandidateFiles++
 
-		if file.Err != nil {
-			index.Errors = append(index.Errors, model.ParseError{
-				Path:  relPath,
-				Error: file.Err.Error(),
-			})
+		parser, ok := b.parserForPath(file.Path)
+		if !ok {
 			file.Close()
 			continue
 		}
 
-		// Use the builder's parser to extract the summary from the
-		// gateway-provided source bytes (option 3: re-parse via the
-		// lang.Parser interface but skip the file read).
-		parser, ok := b.parserForPath(file.Path)
-		if !ok {
+		if file.Err != nil && !file.IsRead {
+			parseErr := model.ParseError{
+				Path:  relPath,
+				Error: file.Err.Error(),
+			}
+			errorsByPath[relPath] = parseErr
+			emitBuildEvent(opts, BuildEvent{
+				Kind:       BuildEventError,
+				Path:       relPath,
+				ParseError: parseErr,
+				Stats:      stats,
+			})
 			file.Close()
 			continue
 		}
@@ -316,9 +325,16 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 		file.Close()
 
 		if parseErr != nil {
-			parsed = append(parsed, parsedEntry{
-				relPath: relPath,
-				err:     parseErr,
+			parseFailure := model.ParseError{
+				Path:  relPath,
+				Error: parseErr.Error(),
+			}
+			errorsByPath[relPath] = parseFailure
+			emitBuildEvent(opts, BuildEvent{
+				Kind:       BuildEventError,
+				Path:       relPath,
+				ParseError: parseFailure,
+				Stats:      stats,
 			})
 			continue
 		}
@@ -340,63 +356,36 @@ func (b *Builder) BuildPathIncremental(ctx context.Context, path string, previou
 			summary.References[i].File = relPath
 		}
 
-		parsed = append(parsed, parsedEntry{relPath: relPath, summary: summary})
+		delete(errorsByPath, relPath)
+		filesByPath[relPath] = summary
 		stats.ParsedFiles++
+		emitBuildEvent(opts, BuildEvent{
+			Kind:    BuildEventParsed,
+			Path:    relPath,
+			Summary: summary,
+			Stats:   stats,
+		})
 	}
+	_ = statsFn()
 
-	// Handle parse errors from the parsed entries.
-	for _, p := range parsed {
-		if p.err != nil {
-			index.Errors = append(index.Errors, model.ParseError{
-				Path:  p.relPath,
-				Error: p.err.Error(),
-			})
-		}
+	index := snapshotIndex(root, filesByPath, errorsByPath)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return index, stats, ctxErr
 	}
-
-	// Merge reused and freshly parsed files, sorted by path.
-	filesByPath := make(map[string]model.FileSummary, len(reused)+len(parsed))
-	for _, r := range reused {
-		filesByPath[r.relPath] = r.summary
-	}
-	for _, p := range parsed {
-		if p.err == nil {
-			filesByPath[p.relPath] = p.summary
-		}
-	}
-
-	// Also count reused files as candidates.
-	stats.CandidateFiles += stats.ReusedFiles
-
-	paths := make([]string, 0, len(filesByPath))
-	for p := range filesByPath {
-		paths = append(paths, p)
-	}
-	sort.Strings(paths)
-
-	index.Files = make([]model.FileSummary, 0, len(paths))
-	for _, p := range paths {
-		index.Files = append(index.Files, filesByPath[p])
-	}
-
 	return index, stats, nil
 }
 
 // buildSingleFile handles the single-file indexing path (when the target is
 // a file rather than a directory).
-func (b *Builder) buildSingleFile(target string, info os.FileInfo, previous *model.Index) (*model.Index, BuildStats, error) {
+func (b *Builder) buildSingleFileWithOptions(ctx context.Context, target string, info os.FileInfo, previous *model.Index, opts BuildOptions) (*model.Index, BuildStats, error) {
 	stats := BuildStats{}
 	root := filepath.Clean(filepath.Dir(target))
-
-	index := &model.Index{
-		Version:     schemaVersion,
-		Root:        root,
-		GeneratedAt: time.Now().UTC(),
-	}
+	filesByPath := map[string]model.FileSummary{}
+	errorsByPath := map[string]model.ParseError{}
 
 	parser, ok := b.parserForPath(target)
 	if !ok {
-		return index, stats, nil
+		return snapshotIndex(root, filesByPath, errorsByPath), stats, nil
 	}
 
 	relPath, relErr := filepath.Rel(root, target)
@@ -420,27 +409,51 @@ func (b *Builder) buildSingleFile(target string, info os.FileInfo, previous *mod
 		for i := range reused.References {
 			reused.References[i].File = relPath
 		}
-		index.Files = append(index.Files, reused)
+		filesByPath[relPath] = reused
 		stats.ReusedFiles = 1
-		return index, stats, nil
+		emitBuildEvent(opts, BuildEvent{
+			Kind:    BuildEventReused,
+			Path:    relPath,
+			Summary: reused,
+			Stats:   stats,
+		})
+		return snapshotIndex(root, filesByPath, errorsByPath), stats, nil
+	}
+
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return snapshotIndex(root, filesByPath, errorsByPath), stats, ctxErr
 	}
 
 	source, readErr := os.ReadFile(target)
 	if readErr != nil {
-		index.Errors = append(index.Errors, model.ParseError{
+		parseErr := model.ParseError{
 			Path:  relPath,
 			Error: readErr.Error(),
+		}
+		errorsByPath[relPath] = parseErr
+		emitBuildEvent(opts, BuildEvent{
+			Kind:       BuildEventError,
+			Path:       relPath,
+			ParseError: parseErr,
+			Stats:      stats,
 		})
-		return index, stats, nil
+		return snapshotIndex(root, filesByPath, errorsByPath), stats, nil
 	}
 
 	summary, parseErr := parser.Parse(target, source)
 	if parseErr != nil {
-		index.Errors = append(index.Errors, model.ParseError{
+		parseFailure := model.ParseError{
 			Path:  relPath,
 			Error: parseErr.Error(),
+		}
+		errorsByPath[relPath] = parseFailure
+		emitBuildEvent(opts, BuildEvent{
+			Kind:       BuildEventError,
+			Path:       relPath,
+			ParseError: parseFailure,
+			Stats:      stats,
 		})
-		return index, stats, nil
+		return snapshotIndex(root, filesByPath, errorsByPath), stats, nil
 	}
 
 	summary.Path = relPath
@@ -453,9 +466,19 @@ func (b *Builder) buildSingleFile(target string, info os.FileInfo, previous *mod
 	for i := range summary.References {
 		summary.References[i].File = relPath
 	}
-	index.Files = append(index.Files, summary)
+	filesByPath[relPath] = summary
 	stats.ParsedFiles = 1
+	emitBuildEvent(opts, BuildEvent{
+		Kind:    BuildEventParsed,
+		Path:    relPath,
+		Summary: summary,
+		Stats:   stats,
+	})
 
+	index := snapshotIndex(root, filesByPath, errorsByPath)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return index, stats, ctxErr
+	}
 	return index, stats, nil
 }
 

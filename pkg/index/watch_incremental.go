@@ -213,8 +213,14 @@ func (b *Builder) ApplyWatchChanges(current *model.Index, changedAbsPaths []stri
 	return next, stats, nil
 }
 
+type watchTreesitterParser interface {
+	TreesitterParser() (*treesitter.Parser, error)
+}
+
 func parseWatchFile(relPath, absPath string, source []byte, info os.FileInfo, parser lang.Parser, state *WatchState, subfileIncremental bool) (model.FileSummary, error) {
-	if tsParser, ok := parser.(*treesitter.Parser); ok {
+	if tsParser, ok, err := resolveWatchTreesitterParser(parser); err != nil {
+		return model.FileSummary{}, err
+	} else if ok {
 		var (
 			fileSummary model.FileSummary
 			tree        *gotreesitter.Tree
@@ -275,6 +281,20 @@ func parseWatchFile(relPath, absPath string, source []byte, info os.FileInfo, pa
 		state.drop(relPath)
 	}
 	return fileSummary, nil
+}
+
+func resolveWatchTreesitterParser(parser lang.Parser) (*treesitter.Parser, bool, error) {
+	if tsParser, ok := parser.(*treesitter.Parser); ok {
+		return tsParser, true, nil
+	}
+	if lazy, ok := parser.(watchTreesitterParser); ok {
+		tsParser, err := lazy.TreesitterParser()
+		if err != nil {
+			return nil, true, err
+		}
+		return tsParser, true, nil
+	}
+	return nil, false, nil
 }
 
 func normalizeChangedPaths(root string, changedAbsPaths []string) map[string]bool {
