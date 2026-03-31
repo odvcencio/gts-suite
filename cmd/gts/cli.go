@@ -29,6 +29,8 @@ func newRootCmd() *cobra.Command {
 		Short:   "Structural code analysis toolkit",
 		Version: version,
 	}
+	root.PersistentFlags().Bool("include-generated", false, "include generated files in analysis output")
+
 	root.AddCommand(
 		newIndexGroup(),
 		newSearchGroup(),

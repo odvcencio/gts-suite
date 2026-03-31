@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/odvcencio/gts-suite/pkg/index"
 	"github.com/odvcencio/gts-suite/pkg/model"
 	"github.com/odvcencio/gts-suite/pkg/xref"
@@ -57,4 +59,25 @@ func definitionLabel(definition xref.Definition) string {
 		return definition.Signature
 	}
 	return definition.Name
+}
+
+// applyGeneratedFilter removes generated files from the index unless
+// --include-generated was passed.
+func applyGeneratedFilter(cmd *cobra.Command, idx *model.Index) *model.Index {
+	includeGenerated, _ := cmd.Flags().GetBool("include-generated")
+	if includeGenerated {
+		return idx
+	}
+	return idx.WithoutGenerated()
+}
+
+// generatedFileMap builds a path → GeneratedInfo lookup from the index.
+func generatedFileMap(idx *model.Index) map[string]*model.GeneratedInfo {
+	m := make(map[string]*model.GeneratedInfo, len(idx.Files))
+	for i := range idx.Files {
+		if idx.Files[i].Generated != nil {
+			m[idx.Files[i].Path] = idx.Files[i].Generated
+		}
+	}
+	return m
 }
