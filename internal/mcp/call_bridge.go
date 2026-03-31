@@ -22,6 +22,7 @@ func (s *Service) callBridge(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 	report, err := bridge.Build(idx, bridge.Options{
 		Top:     top,
 		Focus:   stringArg(args, "focus"),

@@ -19,6 +19,7 @@ func (s *Service) callChunk(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 	filterPath := ""
 	if strings.TrimSpace(cachePath) != "" && strings.TrimSpace(target) != "" {
 		filterPath = target

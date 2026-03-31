@@ -152,6 +152,14 @@ func stringSliceArg(args map[string]any, key string) []string {
 	}
 }
 
+// applyGeneratedFilter removes generated files unless includeGenerated is true.
+func applyGeneratedFilter(idx *model.Index, includeGenerated bool) *model.Index {
+	if includeGenerated {
+		return idx
+	}
+	return idx.WithoutGenerated()
+}
+
 func compactNodeText(text string) string {
 	trimmed := strings.Join(strings.Fields(strings.TrimSpace(text)), " ")
 	const maxLen = 160

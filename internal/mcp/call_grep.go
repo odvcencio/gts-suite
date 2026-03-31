@@ -18,6 +18,7 @@ func (s *Service) callGrep(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 
 	selector, err := query.ParseSelector(selectorRaw)
 	if err != nil {

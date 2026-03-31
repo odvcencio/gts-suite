@@ -19,6 +19,7 @@ func (s *Service) callCallgraph(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 
 	graph, err := xref.Build(idx)
 	if err != nil {

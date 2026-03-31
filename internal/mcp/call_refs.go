@@ -19,6 +19,7 @@ func (s *Service) callRefs(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 
 	matchReference := func(candidate string) bool { return candidate == name }
 	if regexMode {

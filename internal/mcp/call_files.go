@@ -12,6 +12,7 @@ func (s *Service) callFiles(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 	report, err := files.Build(idx, files.Options{
 		Language:   stringArg(args, "language"),
 		MinSymbols: intArg(args, "min_symbols", 0),

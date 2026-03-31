@@ -13,10 +13,13 @@ func (s *Service) callSimilarity(args map[string]any) (any, error) {
 	cacheB := stringArg(args, "cache_b")
 	threshold := floatArg(args, "threshold", 0.7)
 
+	includeGenerated := boolArg(args, "include_generated", false)
+
 	idxA, err := s.loadOrBuild(cacheA, pathA)
 	if err != nil {
 		return nil, err
 	}
+	idxA = applyGeneratedFilter(idxA, includeGenerated)
 
 	idxB := idxA
 	rootB := pathA
@@ -25,6 +28,7 @@ func (s *Service) callSimilarity(args map[string]any) (any, error) {
 		if err != nil {
 			return nil, err
 		}
+		idxB = applyGeneratedFilter(idxB, includeGenerated)
 		rootB = pathB
 	}
 

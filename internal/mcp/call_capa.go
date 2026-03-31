@@ -17,6 +17,7 @@ func (s *Service) callCapa(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
 
 	rules := capa.BuiltinRules()
 
