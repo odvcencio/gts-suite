@@ -76,6 +76,7 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			violations := lint.Evaluate(idx, rules)
 			patternViolations, err := lint.EvaluatePatterns(idx, patterns)

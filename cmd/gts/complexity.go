@@ -42,6 +42,7 @@ func newComplexityCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			opts := complexity.Options{
 				MinCyclomatic: minCyclomatic,

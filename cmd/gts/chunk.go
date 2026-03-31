@@ -40,6 +40,7 @@ func newChunkCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			if lang != "" {
 				filtered := idx.Files[:0]

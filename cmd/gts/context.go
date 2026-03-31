@@ -30,6 +30,7 @@ func newContextCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			report, err := contextpack.Build(idx, contextpack.Options{
 				FilePath:      filePath,

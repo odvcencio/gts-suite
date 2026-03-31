@@ -31,6 +31,7 @@ func newHotspotCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			opts := hotspot.Options{
 				Root:  target,

@@ -38,6 +38,7 @@ func newSimilarityCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading index A: %w", err)
 			}
+			idxA = applyGeneratedFilter(cmd, idxA)
 
 			idxB := idxA
 			pathB := pathA
@@ -47,6 +48,7 @@ func newSimilarityCmd() *cobra.Command {
 				if err != nil {
 					return fmt.Errorf("loading index B: %w", err)
 				}
+				idxB = applyGeneratedFilter(cmd, idxB)
 			}
 
 			pairs, err := similarity.Compare(idxA, idxB, pathA, pathB, threshold, top, maxFuncs)

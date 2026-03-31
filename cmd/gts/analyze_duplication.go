@@ -31,6 +31,7 @@ func newDuplicationCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			pairs, err := similarity.Compare(idx, idx, target, target, threshold, limit, maxFuncs)
 			if err != nil {

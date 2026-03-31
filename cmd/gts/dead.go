@@ -98,6 +98,19 @@ Examples:
 				})
 			}
 
+			// Filter out generated files unless --include-generated is set.
+			includeGenerated, _ := cmd.Flags().GetBool("include-generated")
+			if !includeGenerated {
+				genMap := generatedFileMap(idx)
+				filtered := matches[:0]
+				for _, match := range matches {
+					if genMap[match.File] == nil {
+						filtered = append(filtered, match)
+					}
+				}
+				matches = filtered
+			}
+
 			sort.Slice(matches, func(i, j int) bool {
 				if matches[i].File == matches[j].File {
 					if matches[i].StartLine == matches[j].StartLine {
