@@ -71,6 +71,8 @@ func newCallgraphCmd() *cobra.Command {
 				roots = filtered
 			}
 
+			genMap := generatedFileMap(idx)
+
 			rootIDs := make([]string, 0, len(roots))
 			for _, root := range roots {
 				rootIDs = append(rootIDs, root.ID)
@@ -120,16 +122,30 @@ func newCallgraphCmd() *cobra.Command {
 				len(graph.Unresolved),
 			)
 			for _, root := range walk.Roots {
-				fmt.Printf("root: %s:%d %s %s\n", root.File, root.StartLine, root.Kind, definitionLabel(root))
+				prefix := ""
+				if genMap[root.File] != nil {
+					prefix = "[gen] "
+				}
+				fmt.Printf("root: %s%s:%d %s %s\n", prefix, root.File, root.StartLine, root.Kind, definitionLabel(root))
 			}
 			for _, edge := range walk.Edges {
 				caller := graph.EdgeCaller(edge)
 				callee := graph.EdgeCallee(edge)
+				callerPrefix := ""
+				if genMap[caller.File] != nil {
+					callerPrefix = "[gen] "
+				}
+				calleePrefix := ""
+				if genMap[callee.File] != nil {
+					calleePrefix = "[gen] "
+				}
 				fmt.Printf(
-					"%s:%d %s -> %s:%d %s count=%d resolution=%s\n",
+					"%s%s:%d %s -> %s%s:%d %s count=%d resolution=%s\n",
+					callerPrefix,
 					caller.File,
 					caller.StartLine,
 					definitionLabel(*caller),
+					calleePrefix,
 					callee.File,
 					callee.StartLine,
 					definitionLabel(*callee),

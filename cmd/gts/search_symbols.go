@@ -19,6 +19,7 @@ type symbolMatch struct {
 	Receiver  string `json:"receiver,omitempty"`
 	StartLine int    `json:"start_line"`
 	EndLine   int    `json:"end_line"`
+	Generated string `json:"generated,omitempty"`
 }
 
 func newSymbolsCmd() *cobra.Command {
@@ -75,12 +76,18 @@ func newSymbolsCmd() *cobra.Command {
 				selector = &sel
 			}
 
+			genMap := generatedFileMap(idx)
+
 			truncated := false
 			matches := make([]symbolMatch, 0, 256)
 		outer:
 			for _, file := range idx.Files {
 				if fileRE != nil && !fileRE.MatchString(file.Path) {
 					continue
+				}
+				genTag := ""
+				if gi := genMap[file.Path]; gi != nil {
+					genTag = gi.Generator
 				}
 				for _, sym := range file.Symbols {
 					if selector != nil {
@@ -103,6 +110,7 @@ func newSymbolsCmd() *cobra.Command {
 						Receiver:  sym.Receiver,
 						StartLine: sym.StartLine,
 						EndLine:   sym.EndLine,
+						Generated: genTag,
 					})
 					if limit > 0 && len(matches) >= limit {
 						truncated = true
@@ -154,7 +162,11 @@ func newSymbolsCmd() *cobra.Command {
 				if m.Signature != "" {
 					label = m.Signature
 				}
-				fmt.Printf("%s:%d %s %s\n", m.File, m.StartLine, m.Kind, label)
+				genSuffix := ""
+				if m.Generated != "" {
+					genSuffix = fmt.Sprintf(" [gen:%s]", m.Generated)
+				}
+				fmt.Printf("%s:%d %s %s%s\n", m.File, m.StartLine, m.Kind, label, genSuffix)
 			}
 			if truncated {
 				fmt.Fprintf(os.Stderr, "warning: results truncated at limit=%d, use --limit 0 for all\n", limit)

@@ -17,6 +17,7 @@ type referenceMatch struct {
 	EndLine     int    `json:"end_line"`
 	StartColumn int    `json:"start_column"`
 	EndColumn   int    `json:"end_column"`
+	Generated   string `json:"generated,omitempty"`
 }
 
 type queryCaptureMatch struct {

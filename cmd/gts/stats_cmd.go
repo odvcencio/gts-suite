@@ -48,16 +48,37 @@ func newStatsCmd() *cobra.Command {
 			}
 
 			if jsonOutput {
-				return emitJSON(report)
+				genCount := idx.GeneratedFileCount()
+				type jsonReport struct {
+					stats.Report
+					GeneratedFileCount int `json:"generated_file_count,omitempty"`
+				}
+				jr := jsonReport{Report: report}
+				if genCount > 0 {
+					jr.GeneratedFileCount = genCount
+				}
+				return emitJSON(jr)
 			}
 
-			fmt.Printf(
-				"stats: files=%d symbols=%d errors=%d root=%s\n",
-				report.FileCount,
-				report.SymbolCount,
-				report.ParseErrorCount,
-				report.Root,
-			)
+			genCount := idx.GeneratedFileCount()
+			if genCount > 0 {
+				fmt.Printf(
+					"stats: files=%d (%d generated) symbols=%d errors=%d root=%s\n",
+					report.FileCount,
+					genCount,
+					report.SymbolCount,
+					report.ParseErrorCount,
+					report.Root,
+				)
+			} else {
+				fmt.Printf(
+					"stats: files=%d symbols=%d errors=%d root=%s\n",
+					report.FileCount,
+					report.SymbolCount,
+					report.ParseErrorCount,
+					report.Root,
+				)
+			}
 			if len(report.Languages) > 0 {
 				fmt.Println("languages:")
 				for _, language := range report.Languages {

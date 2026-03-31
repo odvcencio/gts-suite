@@ -54,15 +54,22 @@ func newFilesCmd() *cobra.Command {
 				return emitJSON(report)
 			}
 
+			genMap := generatedFileMap(idx)
+
 			fmt.Printf("files: total=%d shown=%d root=%s\n", report.TotalFiles, report.ShownFiles, report.Root)
 			for _, entry := range report.Entries {
+				genTag := ""
+				if gi := genMap[entry.Path]; gi != nil {
+					genTag = fmt.Sprintf(" [gen:%s]", gi.Generator)
+				}
 				fmt.Printf(
-					"%s language=%s symbols=%d imports=%d size=%d\n",
+					"%s language=%s symbols=%d imports=%d size=%d%s\n",
 					entry.Path,
 					entry.Language,
 					entry.Symbols,
 					entry.Imports,
 					entry.SizeBytes,
+					genTag,
 				)
 			}
 			return nil

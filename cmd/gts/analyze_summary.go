@@ -22,7 +22,8 @@ type summaryDashboard struct {
 }
 
 type fileSummaryInfo struct {
-	Total      int            `json:"total"`
+	Total     int            `json:"total"`
+	Generated int            `json:"generated,omitempty"`
 	ByLanguage map[string]int `json:"by_language"`
 }
 
@@ -136,9 +137,12 @@ func newSummaryCmd() *cobra.Command {
 				return f.FanIn
 			})
 
+			genCount := idx.GeneratedFileCount()
+
 			dashboard := summaryDashboard{
 				Files: fileSummaryInfo{
 					Total:      len(idx.Files),
+					Generated:  genCount,
 					ByLanguage: langCounts,
 				},
 				Symbols: symbolSummaryInfo{
@@ -171,7 +175,11 @@ func newSummaryCmd() *cobra.Command {
 			fmt.Println("=== Codebase Summary ===")
 			fmt.Println()
 
-			fmt.Printf("Files: %d total\n", dashboard.Files.Total)
+			if dashboard.Files.Generated > 0 {
+				fmt.Printf("Files: %d total (%d generated)\n", dashboard.Files.Total, dashboard.Files.Generated)
+			} else {
+				fmt.Printf("Files: %d total\n", dashboard.Files.Total)
+			}
 			for _, lang := range sortedKeys(langCounts) {
 				fmt.Printf("  %-20s %d\n", lang, langCounts[lang])
 			}

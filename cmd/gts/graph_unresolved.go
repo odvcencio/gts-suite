@@ -33,6 +33,7 @@ func newUnresolvedCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
+			idx = applyGeneratedFilter(cmd, idx)
 
 			graph, err := xref.Build(idx)
 			if err != nil {

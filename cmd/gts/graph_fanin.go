@@ -12,15 +12,16 @@ import (
 )
 
 type faninEntry struct {
-	Name      string `json:"name"`
-	Signature string `json:"signature,omitempty"`
-	File      string `json:"file"`
-	Kind      string `json:"kind"`
-	StartLine int    `json:"start_line"`
-	EndLine   int    `json:"end_line"`
-	Incoming  int    `json:"incoming"`
-	Outgoing  int    `json:"outgoing"`
+	Name      string  `json:"name"`
+	Signature string  `json:"signature,omitempty"`
+	File      string  `json:"file"`
+	Kind      string  `json:"kind"`
+	StartLine int     `json:"start_line"`
+	EndLine   int     `json:"end_line"`
+	Incoming  int     `json:"incoming"`
+	Outgoing  int     `json:"outgoing"`
 	Ratio     float64 `json:"ratio"`
+	Generated string  `json:"generated,omitempty"`
 }
 
 func newFaninCmd() *cobra.Command {
@@ -69,6 +70,8 @@ func newFaninCmd() *cobra.Command {
 				return err
 			}
 
+			genMap := generatedFileMap(idx)
+
 			entries := make([]faninEntry, 0, 128)
 			for _, def := range graph.Definitions {
 				if !def.Callable {
@@ -100,6 +103,10 @@ func newFaninCmd() *cobra.Command {
 					ratio = math.Inf(1)
 				}
 
+				genTag := ""
+				if gi := genMap[def.File]; gi != nil {
+					genTag = gi.Generator
+				}
 				entries = append(entries, faninEntry{
 					Name:      def.Name,
 					Signature: def.Signature,
@@ -110,6 +117,7 @@ func newFaninCmd() *cobra.Command {
 					Incoming:  incoming,
 					Outgoing:  outgoing,
 					Ratio:     ratio,
+					Generated: genTag,
 				})
 			}
 
@@ -174,8 +182,13 @@ func newFaninCmd() *cobra.Command {
 				if name == "" {
 					name = e.Name
 				}
+				prefix := ""
+				if e.Generated != "" {
+					prefix = "[gen] "
+				}
 				fmt.Printf(
-					"%s (%s:%d) in=%d out=%d\n",
+					"%s%s (%s:%d) in=%d out=%d\n",
+					prefix,
 					name,
 					e.File,
 					e.StartLine,

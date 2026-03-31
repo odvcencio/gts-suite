@@ -50,12 +50,18 @@ func newRefsCmd() *cobra.Command {
 				matchReference = compiled.MatchString
 			}
 
+			genMap := generatedFileMap(idx)
+
 			truncated := false
 			matches := make([]referenceMatch, 0, 256)
 		outer:
 			for _, file := range idx.Files {
 				if lang != "" && !strings.EqualFold(file.Language, lang) {
 					continue
+				}
+				genTag := ""
+				if gi := genMap[file.Path]; gi != nil {
+					genTag = gi.Generator
 				}
 				for _, reference := range file.References {
 					if !matchReference(reference.Name) {
@@ -69,6 +75,7 @@ func newRefsCmd() *cobra.Command {
 						EndLine:     reference.EndLine,
 						StartColumn: reference.StartColumn,
 						EndColumn:   reference.EndColumn,
+						Generated:   genTag,
 					})
 					if limit > 0 && len(matches) >= limit {
 						truncated = true
@@ -114,7 +121,11 @@ func newRefsCmd() *cobra.Command {
 				return nil
 			}
 			for _, match := range matches {
-				fmt.Printf("%s:%d:%d %s %s\n", match.File, match.StartLine, match.StartColumn, match.Kind, match.Name)
+				genSuffix := ""
+				if match.Generated != "" {
+					genSuffix = fmt.Sprintf(" [gen:%s]", match.Generated)
+				}
+				fmt.Printf("%s:%d:%d %s %s%s\n", match.File, match.StartLine, match.StartColumn, match.Kind, match.Name, genSuffix)
 			}
 			if truncated {
 				fmt.Fprintf(os.Stderr, "warning: results truncated at limit=%d, use --limit 0 for all\n", limit)

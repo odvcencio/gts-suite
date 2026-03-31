@@ -43,13 +43,19 @@ func newMapCmd() *cobra.Command {
 				return streamIndexJSON(os.Stdout, idx, limit)
 			}
 
+			genMap := generatedFileMap(idx)
+
 			fileCount := len(idx.Files)
 			if limit > 0 && limit < fileCount {
 				fileCount = limit
 			}
 			for i := 0; i < fileCount; i++ {
 				file := idx.Files[i]
-				fmt.Printf("%s (%s)\n", file.Path, file.Language)
+				genTag := ""
+				if gi := genMap[file.Path]; gi != nil {
+					genTag = fmt.Sprintf(" [gen:%s]", gi.Generator)
+				}
+				fmt.Printf("%s (%s)%s\n", file.Path, file.Language, genTag)
 				if len(file.Imports) > 0 {
 					fmt.Printf("  imports: %s\n", strings.Join(file.Imports, ", "))
 				}

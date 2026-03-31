@@ -92,6 +92,8 @@ func newImpactCmd() *cobra.Command {
 				result.TotalAffected = len(filtered)
 			}
 
+			genMap := generatedFileMap(idx)
+
 			if countOnly {
 				fmt.Println(result.TotalAffected)
 				return nil
@@ -102,8 +104,13 @@ func newImpactCmd() *cobra.Command {
 			}
 
 			for _, sym := range result.Affected {
+				prefix := ""
+				if genMap[sym.File] != nil {
+					prefix = "[gen] "
+				}
 				fmt.Printf(
-					"%s:%d-%d %s distance=%d risk=%.2f\n",
+					"%s%s:%d-%d %s distance=%d risk=%.2f\n",
+					prefix,
 					sym.File,
 					sym.StartLine,
 					sym.EndLine,

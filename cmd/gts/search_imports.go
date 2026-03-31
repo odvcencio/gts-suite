@@ -10,13 +10,15 @@ import (
 )
 
 type importMatch struct {
-	File   string `json:"file"`
-	Import string `json:"import"`
+	File      string `json:"file"`
+	Import    string `json:"import"`
+	Generated string `json:"generated,omitempty"`
 }
 
 type importFileMatch struct {
-	File    string   `json:"file"`
-	Imports []string `json:"imports"`
+	File      string   `json:"file"`
+	Imports   []string `json:"imports"`
+	Generated string   `json:"generated,omitempty"`
 }
 
 func newImportsCmd() *cobra.Command {
@@ -61,6 +63,8 @@ func newImportsCmd() *cobra.Command {
 				fileRE = compiled
 			}
 
+			genMap := generatedFileMap(idx)
+
 			// Reverse mode: find files that import something matching --pattern.
 			if reverse {
 				if patternRE == nil {
@@ -78,9 +82,14 @@ func newImportsCmd() *cobra.Command {
 						}
 					}
 					if len(matched) > 0 {
+						genTag := ""
+						if gi := genMap[file.Path]; gi != nil {
+							genTag = gi.Generator
+						}
 						matches = append(matches, importFileMatch{
-							File:    file.Path,
-							Imports: matched,
+							File:      file.Path,
+							Imports:   matched,
+							Generated: genTag,
 						})
 					}
 				}
@@ -107,8 +116,12 @@ func newImportsCmd() *cobra.Command {
 				}
 
 				for _, m := range matches {
+					genSuffix := ""
+					if m.Generated != "" {
+						genSuffix = fmt.Sprintf(" [gen:%s]", m.Generated)
+					}
 					for _, imp := range m.Imports {
-						fmt.Printf("%s imports %s\n", m.File, imp)
+						fmt.Printf("%s imports %s%s\n", m.File, imp, genSuffix)
 					}
 				}
 				return nil
@@ -121,13 +134,18 @@ func newImportsCmd() *cobra.Command {
 				if fileRE != nil && !fileRE.MatchString(file.Path) {
 					continue
 				}
+				genTag := ""
+				if gi := genMap[file.Path]; gi != nil {
+					genTag = gi.Generator
+				}
 				for _, imp := range file.Imports {
 					if patternRE != nil && !patternRE.MatchString(imp) {
 						continue
 					}
 					allImports = append(allImports, importMatch{
-						File:   file.Path,
-						Import: imp,
+						File:      file.Path,
+						Import:    imp,
+						Generated: genTag,
 					})
 					uniqueImports[imp] = struct{}{}
 				}
@@ -165,7 +183,11 @@ func newImportsCmd() *cobra.Command {
 					if currentFile != "" {
 						fmt.Println()
 					}
-					fmt.Printf("%s:\n", m.File)
+					genSuffix := ""
+					if m.Generated != "" {
+						genSuffix = fmt.Sprintf(" [gen:%s]", m.Generated)
+					}
+					fmt.Printf("%s:%s\n", m.File, genSuffix)
 					currentFile = m.File
 				}
 				fmt.Printf("  %s\n", m.Import)

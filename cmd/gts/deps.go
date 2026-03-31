@@ -57,6 +57,8 @@ func newDepsCmd() *cobra.Command {
 				return err
 			}
 
+			genMap := generatedFileMap(idx)
+
 			if dotOutput {
 				fmt.Println("digraph deps {")
 				for _, edge := range report.Edges {
@@ -88,14 +90,22 @@ func newDepsCmd() *cobra.Command {
 			if len(report.TopOutgoing) > 0 {
 				fmt.Printf("top outgoing (limit=%d):\n", top)
 				for _, item := range report.TopOutgoing {
-					fmt.Printf("  %s out=%d in=%d project=%t\n", item.Node, item.Outgoing, item.Incoming, item.IsProject)
+					genTag := ""
+					if genMap[item.Node] != nil {
+						genTag = fmt.Sprintf(" [gen:%s]", genMap[item.Node].Generator)
+					}
+					fmt.Printf("  %s out=%d in=%d project=%t%s\n", item.Node, item.Outgoing, item.Incoming, item.IsProject, genTag)
 				}
 			}
 
 			if len(report.TopIncoming) > 0 {
 				fmt.Printf("top incoming (limit=%d):\n", top)
 				for _, item := range report.TopIncoming {
-					fmt.Printf("  %s in=%d out=%d project=%t\n", item.Node, item.Incoming, item.Outgoing, item.IsProject)
+					genTag := ""
+					if genMap[item.Node] != nil {
+						genTag = fmt.Sprintf(" [gen:%s]", genMap[item.Node].Generator)
+					}
+					fmt.Printf("  %s in=%d out=%d project=%t%s\n", item.Node, item.Incoming, item.Outgoing, item.IsProject, genTag)
 				}
 			}
 
