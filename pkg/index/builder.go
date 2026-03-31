@@ -13,6 +13,7 @@ import (
 
 	"github.com/odvcencio/gotreesitter/grammars"
 
+	"github.com/odvcencio/gts-suite/pkg/generated"
 	"github.com/odvcencio/gts-suite/pkg/ignore"
 	"github.com/odvcencio/gts-suite/pkg/lang"
 	"github.com/odvcencio/gts-suite/pkg/lang/treesitter"
@@ -22,8 +23,9 @@ import (
 const schemaVersion = "0.1.0"
 
 type Builder struct {
-	parsers map[string]lang.Parser
-	ignore  *ignore.Matcher
+	parsers  map[string]lang.Parser
+	ignore   *ignore.Matcher
+	detector *generated.Detector
 }
 
 type BuildStats struct {
@@ -137,6 +139,11 @@ func (b *Builder) SetIgnore(m *ignore.Matcher) {
 // Ignore returns the current ignore matcher, or nil if none is set.
 func (b *Builder) Ignore() *ignore.Matcher {
 	return b.ignore
+}
+
+// SetDetector configures a generated-file detector to tag files during indexing.
+func (b *Builder) SetDetector(d *generated.Detector) {
+	b.detector = d
 }
 
 func (b *Builder) Register(extension string, parser lang.Parser) {
@@ -370,6 +377,10 @@ func (b *Builder) BuildPathIncrementalWithOptions(ctx context.Context, path stri
 			summary.References[i].File = relPath
 		}
 
+		if b.detector != nil {
+			summary.Generated = b.detector.Detect(relPath, file.Source)
+		}
+
 		delete(errorsByPath, relPath)
 		filesByPath[relPath] = summary
 		stats.ParsedFiles++
@@ -479,6 +490,9 @@ func (b *Builder) buildSingleFileWithOptions(ctx context.Context, target string,
 	}
 	for i := range summary.References {
 		summary.References[i].File = relPath
+	}
+	if b.detector != nil {
+		summary.Generated = b.detector.Detect(relPath, source)
 	}
 	filesByPath[relPath] = summary
 	stats.ParsedFiles = 1

@@ -140,5 +140,9 @@ func cloneFileSummary(summary model.FileSummary) model.FileSummary {
 	cloned.Imports = append([]string(nil), summary.Imports...)
 	cloned.Symbols = append([]model.Symbol(nil), summary.Symbols...)
 	cloned.References = append([]model.Reference(nil), summary.References...)
+	if summary.Generated != nil {
+		g := *summary.Generated
+		cloned.Generated = &g
+	}
 	return cloned
 }
