@@ -2,11 +2,31 @@ package main
 
 import (
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	"github.com/odvcencio/gts-suite/pkg/complexity"
 )
+
+// changedFiles runs git diff --name-only against the given base ref and returns
+// the set of file paths that differ.
+func changedFiles(base, repoDir string) (map[string]bool, error) {
+	cmd := exec.Command("git", "-C", repoDir, "diff", "--name-only", base)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s: %w", base, err)
+	}
+	files := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files[line] = true
+		}
+	}
+	return files, nil
+}
 
 type checkViolation struct {
 	Check     string `json:"check"`
@@ -18,10 +38,12 @@ type checkViolation struct {
 }
 
 type checkResult struct {
-	Status     string           `json:"status"`
-	Checks     int              `json:"checks"`
-	Violations int              `json:"violations"`
-	Details    []checkViolation `json:"details,omitempty"`
+	Status       string           `json:"status"`
+	Checks       int              `json:"checks"`
+	Violations   int              `json:"violations"`
+	Base         string           `json:"base,omitempty"`
+	ChangedFiles int              `json:"changed_files,omitempty"`
+	Details      []checkViolation `json:"details,omitempty"`
 }
 
 func newCheckCmd() *cobra.Command {
@@ -29,6 +51,7 @@ func newCheckCmd() *cobra.Command {
 		cachePath       string
 		noCache         bool
 		jsonOutput      bool
+		base            string
 		maxCyclomatic   int
 		maxCognitive    int
 		maxLines        int
@@ -136,11 +159,30 @@ func newCheckCmd() *cobra.Command {
 				}
 			}
 
+			// When --base is set, restrict violations to changed files only.
+			var numChanged int
+			if base != "" {
+				changed, diffErr := changedFiles(base, target)
+				if diffErr != nil {
+					return diffErr
+				}
+				numChanged = len(changed)
+				var filtered []checkViolation
+				for _, v := range violations {
+					if v.File == "" || changed[v.File] {
+						filtered = append(filtered, v)
+					}
+				}
+				violations = filtered
+			}
+
 			result := checkResult{
-				Status:     "PASS",
-				Checks:     checksRun,
-				Violations: len(violations),
-				Details:    violations,
+				Status:       "PASS",
+				Checks:       checksRun,
+				Violations:   len(violations),
+				Base:         base,
+				ChangedFiles: numChanged,
+				Details:      violations,
 			}
 			if len(violations) > 0 {
 				result.Status = "FAIL"
@@ -151,7 +193,11 @@ func newCheckCmd() *cobra.Command {
 					return err
 				}
 			} else {
-				fmt.Printf("check: %s (%d checks, %d violations)\n", result.Status, result.Checks, result.Violations)
+				if base != "" {
+					fmt.Printf("check: %s (%d checks, %d violations, base=%s, %d files changed)\n", result.Status, result.Checks, result.Violations, base, numChanged)
+				} else {
+					fmt.Printf("check: %s (%d checks, %d violations)\n", result.Status, result.Checks, result.Violations)
+				}
 				if len(violations) > 0 {
 					fmt.Println("\nviolations:")
 					for _, v := range violations {
@@ -174,6 +220,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().StringVar(&base, "base", "", "git ref to diff against -- only report violations in changed files")
 	cmd.Flags().IntVar(&maxCyclomatic, "max-cyclomatic", 50, "max cyclomatic complexity per function (0 to disable)")
 	cmd.Flags().IntVar(&maxCognitive, "max-cognitive", 80, "max cognitive complexity per function (0 to disable)")
 	cmd.Flags().IntVar(&maxLines, "max-lines", 300, "max lines per function (0 to disable)")

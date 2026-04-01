@@ -2,6 +2,8 @@ package mcp
 
 import (
 	"fmt"
+	"os/exec"
+	"strings"
 
 	"github.com/odvcencio/gts-suite/pkg/complexity"
 )
@@ -16,15 +18,18 @@ type mcpCheckViolation struct {
 }
 
 type mcpCheckResult struct {
-	Status     string              `json:"status"`
-	Checks     int                 `json:"checks"`
-	Violations int                 `json:"violations"`
-	Details    []mcpCheckViolation `json:"details,omitempty"`
+	Status       string              `json:"status"`
+	Checks       int                 `json:"checks"`
+	Violations   int                 `json:"violations"`
+	Base         string              `json:"base,omitempty"`
+	ChangedFiles int                 `json:"changed_files,omitempty"`
+	Details      []mcpCheckViolation `json:"details,omitempty"`
 }
 
 func (s *Service) callCheck(args map[string]any) (any, error) {
 	target := s.stringArgOrDefault(args, "path", s.defaultRoot)
 	cachePath := s.stringArgOrDefault(args, "cache", s.defaultCache)
+	base := stringArg(args, "base")
 	maxCyclomatic := intArg(args, "max_cyclomatic", 50)
 	maxCognitive := intArg(args, "max_cognitive", 80)
 	maxLines := intArg(args, "max_lines", 300)
@@ -117,15 +122,51 @@ func (s *Service) callCheck(args map[string]any) (any, error) {
 		}
 	}
 
+	// When base is set, restrict violations to changed files only.
+	var numChanged int
+	if base != "" {
+		changed, diffErr := mcpChangedFiles(base, target)
+		if diffErr != nil {
+			return nil, diffErr
+		}
+		numChanged = len(changed)
+		var filtered []mcpCheckViolation
+		for _, v := range violations {
+			if v.File == "" || changed[v.File] {
+				filtered = append(filtered, v)
+			}
+		}
+		violations = filtered
+	}
+
 	result := mcpCheckResult{
-		Status:     "PASS",
-		Checks:     checksRun,
-		Violations: len(violations),
-		Details:    violations,
+		Status:       "PASS",
+		Checks:       checksRun,
+		Violations:   len(violations),
+		Base:         base,
+		ChangedFiles: numChanged,
+		Details:      violations,
 	}
 	if len(violations) > 0 {
 		result.Status = "FAIL"
 	}
 
 	return result, nil
+}
+
+// mcpChangedFiles runs git diff --name-only against the given base ref.
+func mcpChangedFiles(base, repoDir string) (map[string]bool, error) {
+	cmd := exec.Command("git", "-C", repoDir, "diff", "--name-only", base)
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git diff --name-only %s: %w", base, err)
+	}
+	files := make(map[string]bool)
+	for _, line := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		line = strings.TrimSpace(line)
+		if line != "" {
+			files[line] = true
+		}
+	}
+	return files, nil
 }

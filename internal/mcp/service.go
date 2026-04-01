@@ -400,6 +400,7 @@ func (s *Service) Tools() []Tool {
 				Properties: map[string]Property{
 					"path":              {Type: "string", Description: "index root path"},
 					"cache":             {Type: "string", Description: "index cache path"},
+					"base":              {Type: "string", Description: "git ref to diff against -- only report violations in changed files (e.g. main, HEAD~1)"},
 					"max_cyclomatic":    {Type: "integer", Description: "max cyclomatic complexity per function (default: 50, 0 to disable)"},
 					"max_cognitive":     {Type: "integer", Description: "max cognitive complexity per function (default: 80, 0 to disable)"},
 					"max_lines":         {Type: "integer", Description: "max lines per function (default: 300, 0 to disable)"},
