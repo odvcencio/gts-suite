@@ -184,6 +184,16 @@ func searchTools() []Tool {
 func graphTools() []Tool {
 	return []Tool{
 		{
+			Name:        "gts_services",
+			Description: "Build repo-to-repo dependency graph from federated .gtsindex files",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"federation": {Type: "string", Description: "directory containing .gtsindex files (required)"},
+				},
+				Required: []string{"federation"},
+			}.ToMap(),
+		},
+		{
 			Name:        "gts_deps",
 			Description: "Analyze dependency graph from structural imports",
 			InputSchema: Schema{
@@ -455,6 +465,32 @@ func analyzeTools() []Tool {
 				Required: []string{"package"},
 			}.ToMap(),
 		},
+		{
+			Name:        "gts_guardrails",
+			Description: "Return structured advisory for a file: generated status, boundary module, complexity, fan-in warnings",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"file":  {Type: "string", Description: "file path to analyze (required)"},
+					"path":  {Type: "string", Description: "index root path"},
+					"cache": {Type: "string", Description: "index cache path"},
+				},
+				Required: []string{"file"},
+			}.ToMap(),
+		},
+		{
+			Name:        "gts_review",
+			Description: "Aggregate review report for changed files: complexity, boundary violations, capabilities, blast radius",
+			InputSchema: Schema{
+				Properties: map[string]Property{
+					"base":              {Type: "string", Description: "git ref to diff against (required, e.g. main, HEAD~1)"},
+					"path":              {Type: "string", Description: "index root path"},
+					"cache":             {Type: "string", Description: "index cache path"},
+					"include_generated": {Type: "boolean", Description: "include generated files (default: false)"},
+					"generator":         {Type: "string", Description: "filter to specific generator"},
+				},
+				Required: []string{"base"},
+			}.ToMap(),
+		},
 	}
 }
 
@@ -646,6 +682,12 @@ func (s *Service) Call(name string, args map[string]any) (any, error) {
 		return s.callDrift(args)
 	case "gts_sbom":
 		return s.callSBOM(args)
+	case "gts_guardrails":
+		return s.callGuardrails(args)
+	case "gts_review":
+		return s.callReview(args)
+	case "gts_services":
+		return s.callServices(args)
 	default:
 		return nil, fmt.Errorf("unknown tool %q", name)
 	}

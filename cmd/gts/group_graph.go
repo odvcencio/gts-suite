@@ -17,6 +17,7 @@ func newGraphGroup() *cobra.Command {
 		newUnresolvedCmd(),
 		newFaninCmd(),
 		newDriftCmd(),
+		newServicesCmd(),
 	)
 	return cmd
 }

@@ -15,6 +15,8 @@ func newIndexGroup() *cobra.Command {
 		newDiffCmd(),
 		newErrorsCmd(),
 		newValidateCmd(),
+		newExportCmd(),
+		newImportCmd(),
 	)
 	return cmd
 }
