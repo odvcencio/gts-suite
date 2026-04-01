@@ -12,7 +12,7 @@ func (s *Service) callDeps(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false), stringArg(args, "generator"))
 
 	report, err := deps.Build(idx, deps.Options{
 		Mode:         s.stringArgOrDefault(args, "by", "package"),

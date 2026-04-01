@@ -21,7 +21,7 @@ func (s *Service) callContext(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false), stringArg(args, "generator"))
 
 	report, err := contextpack.Build(idx, contextpack.Options{
 		FilePath:      filePath,

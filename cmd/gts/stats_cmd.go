@@ -35,6 +35,10 @@ func newStatsCmd() *cobra.Command {
 				return err
 			}
 
+			if gen, _ := cmd.Flags().GetString("generator"); gen != "" {
+				idx = idx.FilterByGenerator(gen)
+			}
+
 			report, err := stats.Build(idx, stats.Options{
 				TopFiles: top,
 			})

@@ -23,7 +23,7 @@ func (s *Service) callQuery(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false), stringArg(args, "generator"))
 
 	captureFilter := map[string]bool{}
 	for _, capture := range captures {

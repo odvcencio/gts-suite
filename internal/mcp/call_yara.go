@@ -12,7 +12,7 @@ func (s *Service) callYara(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false), stringArg(args, "generator"))
 
 	opts := yara.Options{
 		RuleName:   s.stringArgOrDefault(args, "rule_name", "generated_rule"),

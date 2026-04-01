@@ -121,3 +121,21 @@ func (idx *Index) WithoutGenerated() *Index {
 	}
 	return &filtered
 }
+
+// FilterByGenerator returns a copy with only files matching the given generator.
+// "human" matches files with nil Generated.
+func (idx *Index) FilterByGenerator(name string) *Index {
+	if idx == nil {
+		return nil
+	}
+	filtered := *idx
+	filtered.Files = make([]FileSummary, 0)
+	for _, f := range idx.Files {
+		if name == "human" && f.Generated == nil {
+			filtered.Files = append(filtered.Files, f)
+		} else if f.Generated != nil && f.Generated.Generator == name {
+			filtered.Files = append(filtered.Files, f)
+		}
+	}
+	return &filtered
+}

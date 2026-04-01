@@ -30,6 +30,7 @@ func newRootCmd() *cobra.Command {
 		Version: version,
 	}
 	root.PersistentFlags().Bool("include-generated", false, "include generated files in analysis output")
+	root.PersistentFlags().String("generator", "", "filter to a specific generator name (e.g. protobuf, mockgen, human)")
 
 	root.AddCommand(
 		newIndexGroup(),

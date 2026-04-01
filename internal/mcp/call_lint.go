@@ -20,7 +20,7 @@ func (s *Service) callLint(args map[string]any) (any, error) {
 	if err != nil {
 		return nil, err
 	}
-	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false))
+	idx = applyGeneratedFilter(idx, boolArg(args, "include_generated", false), stringArg(args, "generator"))
 
 	rules := make([]lint.Rule, 0, len(rawRules))
 	for _, rawRule := range rawRules {

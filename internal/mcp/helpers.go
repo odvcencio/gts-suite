@@ -159,7 +159,12 @@ func stringSliceArg(args map[string]any, key string) []string {
 }
 
 // applyGeneratedFilter removes generated files unless includeGenerated is true.
-func applyGeneratedFilter(idx *model.Index, includeGenerated bool) *model.Index {
+// If generator is non-empty, it filters to only files from that generator
+// (or "human" for non-generated files).
+func applyGeneratedFilter(idx *model.Index, includeGenerated bool, generator string) *model.Index {
+	if generator != "" {
+		return idx.FilterByGenerator(generator)
+	}
 	if includeGenerated {
 		return idx
 	}

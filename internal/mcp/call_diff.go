@@ -20,18 +20,19 @@ func (s *Service) callDiff(args map[string]any) (any, error) {
 	}
 
 	includeGenerated := boolArg(args, "include_generated", false)
+	generator := stringArg(args, "generator")
 
 	beforeIndex, err := s.loadIndexFromSource(beforePath, beforeCache)
 	if err != nil {
 		return nil, fmt.Errorf("load before source: %w", err)
 	}
-	beforeIndex = applyGeneratedFilter(beforeIndex, includeGenerated)
+	beforeIndex = applyGeneratedFilter(beforeIndex, includeGenerated, generator)
 
 	afterIndex, err := s.loadIndexFromSource(afterPath, afterCache)
 	if err != nil {
 		return nil, fmt.Errorf("load after source: %w", err)
 	}
-	afterIndex = applyGeneratedFilter(afterIndex, includeGenerated)
+	afterIndex = applyGeneratedFilter(afterIndex, includeGenerated, generator)
 
 	report := structdiff.Compare(beforeIndex, afterIndex)
 	return report, nil

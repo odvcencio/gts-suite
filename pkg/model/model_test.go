@@ -274,6 +274,59 @@ func TestGeneratedFileCount_NilIndex(t *testing.T) {
 	}
 }
 
+func TestFilterByGenerator(t *testing.T) {
+	idx := &Index{
+		Files: []FileSummary{
+			{Path: "main.go", Language: "go"},
+			{Path: "user.pb.go", Language: "go", Generated: &GeneratedInfo{Generator: "protobuf", Reason: "filename"}},
+			{Path: "handler.go", Language: "go"},
+			{Path: "mock_repo.go", Language: "go", Generated: &GeneratedInfo{Generator: "mockgen", Reason: "marker"}},
+		},
+	}
+
+	t.Run("human", func(t *testing.T) {
+		filtered := idx.FilterByGenerator("human")
+		if len(filtered.Files) != 2 {
+			t.Fatalf("expected 2 files, got %d", len(filtered.Files))
+		}
+		if filtered.Files[0].Path != "main.go" || filtered.Files[1].Path != "handler.go" {
+			t.Errorf("unexpected files: %v, %v", filtered.Files[0].Path, filtered.Files[1].Path)
+		}
+	})
+
+	t.Run("protobuf", func(t *testing.T) {
+		filtered := idx.FilterByGenerator("protobuf")
+		if len(filtered.Files) != 1 {
+			t.Fatalf("expected 1 file, got %d", len(filtered.Files))
+		}
+		if filtered.Files[0].Path != "user.pb.go" {
+			t.Errorf("expected user.pb.go, got %s", filtered.Files[0].Path)
+		}
+	})
+
+	t.Run("nonexistent", func(t *testing.T) {
+		filtered := idx.FilterByGenerator("sqlc")
+		if len(filtered.Files) != 0 {
+			t.Fatalf("expected 0 files, got %d", len(filtered.Files))
+		}
+	})
+
+	t.Run("nil index", func(t *testing.T) {
+		var nilIdx *Index
+		result := nilIdx.FilterByGenerator("protobuf")
+		if result != nil {
+			t.Fatalf("expected nil, got %+v", result)
+		}
+	})
+
+	t.Run("original unchanged", func(t *testing.T) {
+		_ = idx.FilterByGenerator("protobuf")
+		if len(idx.Files) != 4 {
+			t.Fatalf("original index modified: expected 4 files, got %d", len(idx.Files))
+		}
+	})
+}
+
 // Ensure the time import is used; also serves as a basic smoke test for Index fields.
 func TestIndexFields(t *testing.T) {
 	now := time.Now()
