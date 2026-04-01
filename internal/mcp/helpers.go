@@ -23,13 +23,14 @@ func (s *Service) loadOrBuild(cachePath string, target string) (*model.Index, er
 	autoPath := filepath.Join(target, ".gts", "index.json")
 	if _, err := os.Stat(autoPath); err == nil {
 		if idx, loadErr := index.Load(autoPath); loadErr == nil {
-			if idx.ConfigHashes != nil {
-				current, hashErr := index.ComputeConfigHashes(target)
-				if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
-					return idx, nil
-				}
+			if idx.ConfigHashes == nil {
+				return idx, nil // old cache — use it
 			}
-			// ConfigHashes nil (old cache) or mismatch — fall through to rebuild.
+			current, hashErr := index.ComputeConfigHashes(target)
+			if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
+				return idx, nil
+			}
+			// Config changed — fall through to rebuild.
 		}
 	}
 	builder, err := index.NewBuilderWithWorkspaceIgnores(target)
@@ -49,17 +50,17 @@ func (s *Service) loadIndexFromSource(pathArg, cacheArg string) (*model.Index, e
 	if target == "" {
 		target = s.defaultRoot
 	}
-	// Auto-discover cached index
 	autoPath := filepath.Join(target, ".gts", "index.json")
 	if _, err := os.Stat(autoPath); err == nil {
 		if idx, loadErr := index.Load(autoPath); loadErr == nil {
-			if idx.ConfigHashes != nil {
-				current, hashErr := index.ComputeConfigHashes(target)
-				if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
-					return idx, nil
-				}
+			if idx.ConfigHashes == nil {
+				return idx, nil // old cache — use it
 			}
-			// ConfigHashes nil (old cache) or mismatch — fall through to rebuild.
+			current, hashErr := index.ComputeConfigHashes(target)
+			if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
+				return idx, nil
+			}
+			// Config changed — fall through to rebuild.
 		}
 	}
 	builder, err := index.NewBuilderWithWorkspaceIgnores(target)

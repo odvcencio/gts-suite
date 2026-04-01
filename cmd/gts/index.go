@@ -73,16 +73,25 @@ func newIndexBuildCmd() *cobra.Command {
 			ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 			defer stop()
 
-			builder := index.NewBuilder()
+			builder, err := index.NewBuilderWithWorkspaceIgnores(target)
+			if err != nil {
+				return err
+			}
 
-			// Load repo ignore files, then merge with CLI --ignore flags.
+			// Merge CLI --ignore flags on top of workspace ignores.
 			allIgnoreLines, err := loadIndexIgnoreLines(target)
 			if err != nil {
 				return err
 			}
 			allIgnoreLines = append(allIgnoreLines, ignorePatterns...)
 			if len(allIgnoreLines) > 0 {
-				builder.SetIgnore(ignore.ParsePatterns(allIgnoreLines))
+				existing := builder.Ignore()
+				if existing != nil {
+					// Combine workspace patterns with CLI patterns
+					builder.SetIgnore(ignore.ParsePatterns(allIgnoreLines))
+				} else {
+					builder.SetIgnore(ignore.ParsePatterns(allIgnoreLines))
+				}
 			}
 
 			var previous *model.Index

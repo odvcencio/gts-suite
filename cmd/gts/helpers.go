@@ -23,17 +23,18 @@ func loadOrBuild(cachePath string, target string, noCache bool) (*model.Index, e
 		autoPath := filepath.Join(target, ".gts", "index.json")
 		if fi, err := os.Stat(autoPath); err == nil {
 			if idx, loadErr := index.Load(autoPath); loadErr == nil {
+				age := time.Since(fi.ModTime()).Truncate(time.Second)
 				if idx.ConfigHashes == nil {
-					fmt.Fprintf(os.Stderr, "index: cache predates config tracking, rebuilding...\n")
-				} else {
-					current, hashErr := index.ComputeConfigHashes(target)
-					if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
-						age := time.Since(fi.ModTime()).Truncate(time.Second)
-						fmt.Fprintf(os.Stderr, "index: using cached %s (age %s, pass --no-cache for fresh)\n", autoPath, age)
-						return idx, nil
-					}
-					fmt.Fprintf(os.Stderr, "index: config changed since last build, rebuilding...\n")
+					// Old cache without config tracking — use it but suggest rebuild
+					fmt.Fprintf(os.Stderr, "index: using cached %s (age %s, rebuild with 'gts index build' for config tracking)\n", autoPath, age)
+					return idx, nil
 				}
+				current, hashErr := index.ComputeConfigHashes(target)
+				if hashErr == nil && configHashesMatch(idx.ConfigHashes, current) {
+					fmt.Fprintf(os.Stderr, "index: using cached %s (age %s, pass --no-cache for fresh)\n", autoPath, age)
+					return idx, nil
+				}
+				fmt.Fprintf(os.Stderr, "index: config changed since last build, rebuilding...\n")
 			}
 		}
 	}
