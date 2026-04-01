@@ -51,6 +51,7 @@ type Report struct {
 	FocusIncoming     []string     `json:"focus_incoming,omitempty"`
 	FocusWalk         []string     `json:"focus_walk,omitempty"`
 	Edges             []Edge       `json:"edges,omitempty"`
+	Cycles            []Cycle      `json:"cycles"`
 }
 
 func Build(idx *model.Index, opts Options) (Report, error) {

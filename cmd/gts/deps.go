@@ -21,6 +21,7 @@ func newDepsCmd() *cobra.Command {
 	var jsonOutput bool
 	var countOnly bool
 	var dotOutput bool
+	var cyclesOnly bool
 
 	cmd := &cobra.Command{
 		Use:     "deps [path]",
@@ -51,13 +52,31 @@ func newDepsCmd() *cobra.Command {
 				Focus:        focus,
 				Depth:        depth,
 				Reverse:      reverse,
-				IncludeEdges: includeEdges || jsonOutput || dotOutput,
+				IncludeEdges: includeEdges || jsonOutput || dotOutput || cyclesOnly,
 			})
 			if err != nil {
 				return err
 			}
 
 			genMap := generatedFileMap(idx)
+
+			// Detect cycles when requested or for JSON output.
+			if cyclesOnly || jsonOutput {
+				graph := deps.GraphFromEdges(report.Edges)
+				cycles := deps.DetectCycles(graph)
+				if cycles == nil {
+					cycles = []deps.Cycle{}
+				}
+				report.Cycles = cycles
+			}
+
+			if cyclesOnly && !jsonOutput {
+				fmt.Printf("cycles: %d found\n", len(report.Cycles))
+				for _, c := range report.Cycles {
+					fmt.Printf("  %s\n", strings.Join(c.Path, " -> "))
+				}
+				return nil
+			}
 
 			if dotOutput {
 				fmt.Println("digraph deps {")
@@ -148,6 +167,7 @@ func newDepsCmd() *cobra.Command {
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
 	cmd.Flags().BoolVar(&countOnly, "count", false, "print only the count of dependency edges")
 	cmd.Flags().BoolVar(&dotOutput, "dot", false, "emit DOT graph for Graphviz visualization")
+	cmd.Flags().BoolVar(&cyclesOnly, "cycles", false, "only show import cycles")
 	return cmd
 }
 
