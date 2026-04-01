@@ -215,14 +215,9 @@ func (b *Builder) BuildPathIncrementalWithOptions(ctx context.Context, path stri
 	for dir := range DefaultSkipDirs() {
 		policy.SkipDirs = append(policy.SkipDirs, dir)
 	}
-	// DefaultPolicy uses GOMAXPROCS when GTS_MAX_CONCURRENT is unset, which is
-	// too aggressive for large mixed-language repos and can drive multi-GB RSS
-	// spikes. Keep indexing serialized by default; callers can still opt back
-	// into higher fanout explicitly via GTS_MAX_CONCURRENT.
-	if os.Getenv("GTS_MAX_CONCURRENT") == "" {
-		policy.MaxConcurrent = 1
-		policy.ChannelBuffer = 2
-	}
+	// DefaultPolicy uses GOMAXPROCS for concurrency. Lazy grammar loading
+	// (sync.Once per language) prevents the OOM spikes that originally
+	// motivated serial parsing. GTS_MAX_CONCURRENT env var still overrides.
 	policy.ShouldParse = func(absPath string, size int64, modTime time.Time) bool {
 		// Skip files inside hidden directories (dot-prefixed), matching
 		// the old collectCandidates behaviour.
@@ -409,6 +404,10 @@ func (b *Builder) BuildPathIncrementalWithOptions(ctx context.Context, path stri
 	}
 	_ = statsFn()
 
+	if langCount := countDistinctLanguages(filesByPath); langCount > 20 {
+		fmt.Fprintf(os.Stderr, "warning: %d distinct languages detected — this may cause high memory usage\n", langCount)
+	}
+
 	index := snapshotIndex(root, filesByPath, errorsByPath)
 	if ctxErr := ctx.Err(); ctxErr != nil {
 		return index, stats, ctxErr
@@ -582,4 +581,14 @@ func (b *Builder) parserForPath(path string) (lang.Parser, bool) {
 
 func (b *Builder) ParserForPath(path string) (lang.Parser, bool) {
 	return b.parserForPath(path)
+}
+
+func countDistinctLanguages(files map[string]model.FileSummary) int {
+	langs := make(map[string]bool)
+	for _, f := range files {
+		if f.Language != "" {
+			langs[f.Language] = true
+		}
+	}
+	return len(langs)
 }
