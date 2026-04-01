@@ -2,11 +2,13 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"sort"
 
 	"github.com/spf13/cobra"
 
 	"github.com/odvcencio/gts-suite/internal/lint"
+	"github.com/odvcencio/gts-suite/pkg/sarif"
 )
 
 func newLintCmd() *cobra.Command {
@@ -14,6 +16,7 @@ func newLintCmd() *cobra.Command {
 	var noCache bool
 	var failOnViolations bool
 	var jsonOutput bool
+	var format string
 	var rawRules []string
 	var rawPatterns []string
 	var noDefaults bool
@@ -144,13 +147,35 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 				return violations[i].File < violations[j].File
 			})
 
-			if jsonOutput {
+			// Resolve output format: --json implies "json" for backward compat.
+			outputFmt := format
+			if jsonOutput && outputFmt == "text" {
+				outputFmt = "json"
+			}
+
+			switch outputFmt {
+			case "sarif":
+				log := sarif.NewLog()
+				log.Runs[0].Tool.Driver.Version = version
+				seen := map[string]bool{}
+				for _, v := range violations {
+					if !seen[v.RuleID] {
+						log.AddRule(v.RuleID, v.RuleID)
+						seen[v.RuleID] = true
+					}
+					level := sarif.MapSeverity(v.Severity)
+					log.AddResult(v.RuleID, level, v.Message, v.File, v.StartLine, v.EndLine)
+				}
+				if err := log.Encode(os.Stdout); err != nil {
+					return err
+				}
+			case "json":
 				return emitJSON(struct {
-					Rules          []lint.Rule          `json:"rules,omitempty"`
-					Patterns       []lint.QueryPattern  `json:"patterns,omitempty"`
-					ThresholdRules []lint.ThresholdRule  `json:"threshold_rules,omitempty"`
-					Violations     []lint.Violation      `json:"violations,omitempty"`
-					Count          int                   `json:"count"`
+					Rules          []lint.Rule         `json:"rules,omitempty"`
+					Patterns       []lint.QueryPattern `json:"patterns,omitempty"`
+					ThresholdRules []lint.ThresholdRule `json:"threshold_rules,omitempty"`
+					Violations     []lint.Violation     `json:"violations,omitempty"`
+					Count          int                  `json:"count"`
 				}{
 					Rules:          rules,
 					Patterns:       patterns,
@@ -158,42 +183,42 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 					Violations:     violations,
 					Count:          len(violations),
 				})
-			}
-
-			for _, violation := range violations {
-				severity := violation.Severity
-				if severity == "" {
-					severity = "warn"
-				}
-				if violation.StartLine <= 0 {
+			default:
+				for _, violation := range violations {
+					severity := violation.Severity
+					if severity == "" {
+						severity = "warn"
+					}
+					if violation.StartLine <= 0 {
+						fmt.Printf(
+							"[%s] %s %s %s rule=%s %s\n",
+							severity,
+							violation.File,
+							violation.Kind,
+							violation.Name,
+							violation.RuleID,
+							violation.Message,
+						)
+						continue
+					}
 					fmt.Printf(
-						"[%s] %s %s %s rule=%s %s\n",
+						"[%s] %s:%d:%d %s %s rule=%s %s\n",
 						severity,
 						violation.File,
+						violation.StartLine,
+						violation.EndLine,
 						violation.Kind,
 						violation.Name,
 						violation.RuleID,
 						violation.Message,
 					)
-					continue
 				}
-				fmt.Printf(
-					"[%s] %s:%d:%d %s %s rule=%s %s\n",
-					severity,
-					violation.File,
-					violation.StartLine,
-					violation.EndLine,
-					violation.Kind,
-					violation.Name,
-					violation.RuleID,
-					violation.Message,
-				)
-			}
 
-			thresholdCount := len(thresholdRules)
-			fmt.Printf("lint: rules=%d patterns=%d thresholds=%d violations=%d\n", len(rules), len(patterns), thresholdCount, len(violations))
-			if len(idx.Errors) > 0 {
-				fmt.Printf("lint: parse errors=%d (ignored)\n", len(idx.Errors))
+				thresholdCount := len(thresholdRules)
+				fmt.Printf("lint: rules=%d patterns=%d thresholds=%d violations=%d\n", len(rules), len(patterns), thresholdCount, len(violations))
+				if len(idx.Errors) > 0 {
+					fmt.Printf("lint: parse errors=%d (ignored)\n", len(idx.Errors))
+				}
 			}
 
 			if len(violations) > 0 && failOnViolations {
@@ -210,6 +235,7 @@ Built-in rules compose with explicit --rule and --pattern flags: all fire togeth
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&failOnViolations, "fail-on-violations", true, "exit non-zero when violations are found")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, sarif")
 	cmd.Flags().StringArrayVar(&rawRules, "rule", nil, "lint rule expression (repeatable)")
 	cmd.Flags().StringArrayVar(&rawPatterns, "pattern", nil, "tree-sitter query pattern file (.scm) (repeatable)")
 	cmd.Flags().BoolVar(&noDefaults, "no-defaults", false, "disable built-in threshold rules")

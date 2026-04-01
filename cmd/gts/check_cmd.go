@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"os/exec"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/odvcencio/gts-suite/internal/lint"
 	"github.com/odvcencio/gts-suite/pkg/complexity"
+	"github.com/odvcencio/gts-suite/pkg/sarif"
 )
 
 // changedFiles runs git diff --name-only against the given base ref and returns
@@ -52,6 +54,7 @@ func newCheckCmd() *cobra.Command {
 		cachePath       string
 		noCache         bool
 		jsonOutput      bool
+		format          string
 		base            string
 		maxCyclomatic   int
 		maxCognitive    int
@@ -215,11 +218,33 @@ func newCheckCmd() *cobra.Command {
 				result.Status = "FAIL"
 			}
 
-			if jsonOutput {
+			// Resolve output format: --json implies "json" for backward compat.
+			outputFmt := format
+			if jsonOutput && outputFmt == "text" {
+				outputFmt = "json"
+			}
+
+			switch outputFmt {
+			case "sarif":
+				log := sarif.NewLog()
+				log.Runs[0].Tool.Driver.Version = version
+				seen := map[string]bool{}
+				for _, v := range violations {
+					if !seen[v.Check] {
+						log.AddRule(v.Check, v.Check+" threshold exceeded")
+						seen[v.Check] = true
+					}
+					msg := fmt.Sprintf("%s %s value=%d (max=%d)", v.File, v.Name, v.Value, v.Threshold)
+					log.AddResult(v.Check, "error", msg, v.File, v.Line, 0)
+				}
+				if err := log.Encode(os.Stdout); err != nil {
+					return err
+				}
+			case "json":
 				if err := emitJSON(result); err != nil {
 					return err
 				}
-			} else {
+			default:
 				if base != "" {
 					fmt.Printf("check: %s (%d checks, %d violations, base=%s, %d files changed)\n", result.Status, result.Checks, result.Violations, base, numChanged)
 				} else {
@@ -247,6 +272,7 @@ func newCheckCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, sarif")
 	cmd.Flags().StringVar(&base, "base", "", "git ref to diff against -- only report violations in changed files")
 	cmd.Flags().IntVar(&maxCyclomatic, "max-cyclomatic", 50, "max cyclomatic complexity per function (0 to disable)")
 	cmd.Flags().IntVar(&maxCognitive, "max-cognitive", 80, "max cognitive complexity per function (0 to disable)")

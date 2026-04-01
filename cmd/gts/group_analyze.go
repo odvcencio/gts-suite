@@ -19,6 +19,7 @@ func newAnalyzeGroup() *cobra.Command {
 		newDuplicationCmd(),
 		newSummaryCmd(),
 		newBoundariesCmd(),
+		newTrendsCmd(),
 	)
 	return cmd
 }

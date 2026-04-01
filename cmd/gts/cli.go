@@ -39,6 +39,7 @@ func newRootCmd() *cobra.Command {
 		newAnalyzeGroup(),
 		newTransformGroup(),
 		newMCPCmd(),
+		newInitCmd(),
 	)
 	return root
 }

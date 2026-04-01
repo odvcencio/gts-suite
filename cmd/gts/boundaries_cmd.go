@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 	"path/filepath"
 	"strings"
 
@@ -9,6 +10,7 @@ import (
 
 	"github.com/odvcencio/gts-suite/internal/deps"
 	"github.com/odvcencio/gts-suite/pkg/boundaries"
+	"github.com/odvcencio/gts-suite/pkg/sarif"
 )
 
 type boundaryResult struct {
@@ -23,6 +25,7 @@ func newBoundariesCmd() *cobra.Command {
 		cachePath  string
 		noCache    bool
 		jsonOutput bool
+		format     string
 		base       string
 	)
 
@@ -109,11 +112,28 @@ func newBoundariesCmd() *cobra.Command {
 				result.Status = "FAIL"
 			}
 
-			if jsonOutput {
+			// Resolve output format: --json implies "json" for backward compat.
+			outputFmt := format
+			if jsonOutput && outputFmt == "text" {
+				outputFmt = "json"
+			}
+
+			switch outputFmt {
+			case "sarif":
+				log := sarif.NewLog()
+				log.Runs[0].Tool.Driver.Version = version
+				log.AddRule("boundary-violation", "Module boundary violation")
+				for _, v := range violations {
+					log.AddResult("boundary-violation", "error", v.Message, v.From, 0, 0)
+				}
+				if err := log.Encode(os.Stdout); err != nil {
+					return err
+				}
+			case "json":
 				if err := emitJSON(result); err != nil {
 					return err
 				}
-			} else {
+			default:
 				if base != "" {
 					fmt.Printf("boundaries: %s (%d violations, base=%s)\n", result.Status, result.Violations, base)
 				} else {
@@ -134,6 +154,7 @@ func newBoundariesCmd() *cobra.Command {
 	cmd.Flags().StringVar(&cachePath, "cache", "", "load index from cache instead of parsing")
 	cmd.Flags().BoolVar(&noCache, "no-cache", false, "skip auto-discovery of cached index")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit JSON output")
+	cmd.Flags().StringVar(&format, "format", "text", "output format: text, json, sarif")
 	cmd.Flags().StringVar(&base, "base", "", "git ref to diff against -- only report violations in changed files")
 	return cmd
 }
