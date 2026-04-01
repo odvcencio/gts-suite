@@ -85,6 +85,12 @@ func newStatsCmd() *cobra.Command {
 					fmt.Printf("  %s files=%d symbols=%d\n", language.Language, language.Files, language.Symbols)
 				}
 			}
+			if len(report.Generators) > 0 {
+				fmt.Println("generators:")
+				for _, gen := range report.Generators {
+					fmt.Printf("  %s files=%d symbols=%d\n", gen.Generator, gen.Files, gen.Symbols)
+				}
+			}
 			if len(report.KindCounts) > 0 {
 				fmt.Println("kinds:")
 				for _, kind := range report.KindCounts {

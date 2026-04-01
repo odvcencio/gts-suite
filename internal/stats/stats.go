@@ -24,6 +24,12 @@ type LanguageCount struct {
 	Symbols  int    `json:"symbols"`
 }
 
+type GeneratorCount struct {
+	Generator string `json:"generator"`
+	Files     int    `json:"files"`
+	Symbols   int    `json:"symbols"`
+}
+
 type FileMetric struct {
 	Path      string `json:"path"`
 	Language  string `json:"language"`
@@ -39,8 +45,9 @@ type Report struct {
 	SymbolCount        int             `json:"symbol_count"`
 	ParseErrorCount    int             `json:"parse_error_count"`
 	KindCounts         []KindCount     `json:"kind_counts,omitempty"`
-	Languages          []LanguageCount `json:"languages,omitempty"`
-	TopFiles           []FileMetric    `json:"top_files,omitempty"`
+	Languages          []LanguageCount  `json:"languages,omitempty"`
+	Generators         []GeneratorCount `json:"generators,omitempty"`
+	TopFiles           []FileMetric     `json:"top_files,omitempty"`
 }
 
 func Build(idx *model.Index, opts Options) (Report, error) {
@@ -57,6 +64,11 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		symbols int
 	}
 	languages := map[string]*langAgg{}
+	type genAgg struct {
+		files   int
+		symbols int
+	}
+	generators := map[string]*genAgg{}
 	fileMetrics := make([]FileMetric, 0, len(idx.Files))
 
 	for _, file := range idx.Files {
@@ -71,6 +83,16 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		}
 		entry.files++
 		entry.symbols += len(file.Symbols)
+
+		if file.Generated != nil {
+			g, ok := generators[file.Generated.Generator]
+			if !ok {
+				g = &genAgg{}
+				generators[file.Generated.Generator] = g
+			}
+			g.files++
+			g.symbols += len(file.Symbols)
+		}
 
 		for _, symbol := range file.Symbols {
 			kindCounts[symbol.Kind]++
@@ -111,6 +133,17 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		return languageList[i].Files > languageList[j].Files
 	})
 
+	generatorList := make([]GeneratorCount, 0, len(generators))
+	for gen, agg := range generators {
+		generatorList = append(generatorList, GeneratorCount{Generator: gen, Files: agg.files, Symbols: agg.symbols})
+	}
+	sort.Slice(generatorList, func(i, j int) bool {
+		if generatorList[i].Files == generatorList[j].Files {
+			return generatorList[i].Generator < generatorList[j].Generator
+		}
+		return generatorList[i].Files > generatorList[j].Files
+	})
+
 	sort.Slice(fileMetrics, func(i, j int) bool {
 		if fileMetrics[i].Symbols == fileMetrics[j].Symbols {
 			return fileMetrics[i].Path < fileMetrics[j].Path
@@ -129,6 +162,7 @@ func Build(idx *model.Index, opts Options) (Report, error) {
 		ParseErrorCount:    len(idx.Errors),
 		KindCounts:         kindList,
 		Languages:          languageList,
+		Generators:         generatorList,
 		TopFiles:           fileMetrics,
 	}
 	return report, nil

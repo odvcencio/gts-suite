@@ -52,6 +52,83 @@ func TestBuildAggregatesCounts(t *testing.T) {
 	}
 }
 
+func TestBuildGeneratorBreakdown(t *testing.T) {
+	idx := &model.Index{
+		Root: "/tmp/repo",
+		Files: []model.FileSummary{
+			{
+				Path:     "main.go",
+				Language: "go",
+				Symbols:  []model.Symbol{{Kind: "function_definition", Name: "main"}},
+			},
+			{
+				Path:      "user.pb.go",
+				Language:  "go",
+				Generated: &model.GeneratedInfo{Generator: "protobuf", Reason: "filename"},
+				Symbols: []model.Symbol{
+					{Kind: "type_definition", Name: "User"},
+					{Kind: "function_definition", Name: "GetUser"},
+				},
+			},
+			{
+				Path:      "order.pb.go",
+				Language:  "go",
+				Generated: &model.GeneratedInfo{Generator: "protobuf", Reason: "filename"},
+				Symbols:   []model.Symbol{{Kind: "type_definition", Name: "Order"}},
+			},
+			{
+				Path:      "mock_repo.go",
+				Language:  "go",
+				Generated: &model.GeneratedInfo{Generator: "mockgen", Reason: "marker"},
+				Symbols:   []model.Symbol{{Kind: "function_definition", Name: "NewMockRepo"}},
+			},
+		},
+	}
+
+	report, err := Build(idx, Options{TopFiles: 10})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	if len(report.Generators) != 2 {
+		t.Fatalf("expected 2 generators, got %d: %+v", len(report.Generators), report.Generators)
+	}
+
+	// Sorted by files descending: protobuf=2, mockgen=1
+	if report.Generators[0].Generator != "protobuf" {
+		t.Errorf("expected first generator to be protobuf, got %s", report.Generators[0].Generator)
+	}
+	if report.Generators[0].Files != 2 || report.Generators[0].Symbols != 3 {
+		t.Errorf("protobuf: expected files=2 symbols=3, got files=%d symbols=%d",
+			report.Generators[0].Files, report.Generators[0].Symbols)
+	}
+	if report.Generators[1].Generator != "mockgen" {
+		t.Errorf("expected second generator to be mockgen, got %s", report.Generators[1].Generator)
+	}
+	if report.Generators[1].Files != 1 || report.Generators[1].Symbols != 1 {
+		t.Errorf("mockgen: expected files=1 symbols=1, got files=%d symbols=%d",
+			report.Generators[1].Files, report.Generators[1].Symbols)
+	}
+}
+
+func TestBuildNoGeneratedFiles(t *testing.T) {
+	idx := &model.Index{
+		Root: "/tmp/repo",
+		Files: []model.FileSummary{
+			{Path: "main.go", Language: "go"},
+		},
+	}
+
+	report, err := Build(idx, Options{TopFiles: 10})
+	if err != nil {
+		t.Fatalf("Build returned error: %v", err)
+	}
+
+	if len(report.Generators) != 0 {
+		t.Fatalf("expected 0 generators, got %d", len(report.Generators))
+	}
+}
+
 func TestBuildNilIndex(t *testing.T) {
 	_, err := Build(nil, Options{})
 	if err == nil {
