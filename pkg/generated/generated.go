@@ -4,6 +4,7 @@ package generated
 
 import (
 	"bytes"
+	"fmt"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -55,7 +56,7 @@ func NewDetector(configs []ConfigEntry, scanDepth ...int) *Detector {
 		for _, m := range sig.Markers {
 			re, err := regexp.Compile(m)
 			if err != nil {
-				continue
+				panic(fmt.Sprintf("generated: invalid marker regexp %q for %q: %v", m, sig.Generator, err))
 			}
 			cs.markers = append(cs.markers, re)
 		}
@@ -133,6 +134,7 @@ func (d *Detector) Detect(relPath string, source []byte) *model.GeneratedInfo {
 func extractHeader(source []byte, maxLines int) []byte {
 	var result []byte
 	contentLines := 0
+	totalLines := 0
 	offset := 0
 	for offset < len(source) {
 		nl := bytes.IndexByte(source[offset:], '\n')
@@ -162,6 +164,11 @@ func extractHeader(source []byte, maxLines int) []byte {
 			result = append(result, line...)
 		}
 
+		totalLines++
+		if totalLines > maxLines*3 {
+			break
+		}
+
 		if nl < 0 {
 			break
 		}
@@ -172,33 +179,43 @@ func extractHeader(source []byte, maxLines int) []byte {
 
 // matchGlob matches a pattern against a slash-separated path, supporting **
 // for recursive directory matching. Falls back to filepath.Match for patterns
-// without **.
+// without **. Multiple ** segments (e.g. src/**/gen/**/*.pb.go) are supported.
 func matchGlob(pattern, path string) bool {
 	if !strings.Contains(pattern, "**") {
 		matched, _ := filepath.Match(pattern, path)
 		return matched
 	}
 	parts := strings.Split(pattern, "**")
-	if len(parts) == 2 {
-		prefix := strings.TrimSuffix(parts[0], "/")
-		suffix := strings.TrimPrefix(parts[1], "/")
-		if prefix != "" && !strings.HasPrefix(path, prefix+"/") && path != prefix {
-			return false
-		}
-		if suffix == "" {
-			return true
-		}
-		remaining := path
-		if prefix != "" {
-			remaining = strings.TrimPrefix(path, prefix+"/")
-		}
-		segments := strings.Split(remaining, "/")
-		for i := range segments {
-			tail := strings.Join(segments[i:], "/")
-			if matched, _ := filepath.Match(suffix, tail); matched {
-				return true
+	// Check prefix (before first **)
+	prefix := strings.TrimSuffix(parts[0], "/")
+	if prefix != "" && !strings.HasPrefix(path, prefix+"/") && path != prefix {
+		return false
+	}
+	// Check suffix (after last **)
+	suffix := strings.TrimPrefix(parts[len(parts)-1], "/")
+	if suffix != "" {
+		if matched, _ := filepath.Match(suffix, filepath.Base(path)); !matched {
+			// Also try matching the suffix against trailing path segments
+			segments := strings.Split(path, "/")
+			matched := false
+			for i := range segments {
+				tail := strings.Join(segments[i:], "/")
+				if m, _ := filepath.Match(suffix, tail); m {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return false
 			}
 		}
 	}
-	return false
+	// For middle ** segments, verify the path contains the in-between literals
+	for i := 1; i < len(parts)-1; i++ {
+		mid := strings.Trim(parts[i], "/")
+		if mid != "" && !strings.Contains(path, mid) {
+			return false
+		}
+	}
+	return true
 }

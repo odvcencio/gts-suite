@@ -111,6 +111,22 @@ Examples:
 				matches = filtered
 			}
 
+			// Filter by specific generator if --generator is set.
+			generator, _ := cmd.Flags().GetString("generator")
+			if generator != "" {
+				genMap := generatedFileMap(idx)
+				var genFiltered []deadMatch
+				for _, match := range matches {
+					gi := genMap[match.File]
+					if generator == "human" && gi == nil {
+						genFiltered = append(genFiltered, match)
+					} else if gi != nil && gi.Generator == generator {
+						genFiltered = append(genFiltered, match)
+					}
+				}
+				matches = genFiltered
+			}
+
 			sort.Slice(matches, func(i, j int) bool {
 				if matches[i].File == matches[j].File {
 					if matches[i].StartLine == matches[j].StartLine {

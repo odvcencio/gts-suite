@@ -83,7 +83,7 @@ func FastExtractSymbols(path string, source []byte, language string) model.FileS
 			seen[name] = true
 
 			line := lineFromOffset(lineOffsets, match[0])
-			kind := inferKind(re, language)
+			kind := inferKind(re)
 
 			summary.Symbols = append(summary.Symbols, model.Symbol{
 				File:      path,
@@ -121,7 +121,7 @@ func lineFromOffset(offsets []int, offset int) int {
 	return lo // 1-based
 }
 
-func inferKind(re *regexp.Regexp, language string) string {
+func inferKind(re *regexp.Regexp) string {
 	pattern := re.String()
 	switch {
 	case strings.Contains(pattern, "struct") || strings.Contains(pattern, "class") || strings.Contains(pattern, "interface") || strings.Contains(pattern, "enum"):

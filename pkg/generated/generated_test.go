@@ -142,7 +142,7 @@ func TestDetect_AllLanguagePatterns(t *testing.T) {
 		{"mock_repo.go", "mockgen", true},
 		{"repo_mock.go", "mockgen", true},
 		{"wire_gen.go", "wire", true},
-		{"size_string.go", "stringer", true},
+		{"size_string.go", "", false}, // stringer now detected only by marker, not filename
 		{"color_enumer.go", "enumer", true},
 		{"zz_generated.deepcopy.go", "deepcopy", true},
 		// Python
@@ -299,6 +299,22 @@ func TestMatchGlob(t *testing.T) {
 	for _, tc := range cases {
 		got := matchGlob(tc.pattern, tc.path)
 		if got != tc.want {
+			t.Errorf("matchGlob(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
+		}
+	}
+}
+
+func TestMatchGlob_MultipleDoubleStars(t *testing.T) {
+	cases := []struct {
+		pattern, path string
+		want          bool
+	}{
+		{"src/**/gen/**/*.pb.go", "src/api/gen/v1/user.pb.go", true},
+		{"src/**/gen/**/*.pb.go", "src/gen/user.pb.go", true},
+		{"src/**/gen/**/*.pb.go", "other/gen/user.pb.go", false},
+	}
+	for _, tc := range cases {
+		if got := matchGlob(tc.pattern, tc.path); got != tc.want {
 			t.Errorf("matchGlob(%q, %q) = %v, want %v", tc.pattern, tc.path, got, tc.want)
 		}
 	}
